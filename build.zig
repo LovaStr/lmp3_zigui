@@ -1,0 +1,84 @@
+const std = @import("std");
+const builtin = @import("builtin");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const sdl3_prefix = b.option(
+        []const u8,
+        "sdl3-prefix",
+        "SDL3 development prefix containing include/ and lib/ (needed on Windows; e.g. SDL3-devel\\x86_64-w64-mingw32)",
+    );
+    const sdl3_dll = b.option(
+        []const u8,
+        "sdl3-dll",
+        "Path to SDL3.dll to copy next to the executable (Windows)",
+    );
+
+    const zigui_dep = b.dependency("zigui", .{ .target = target, .optimize = optimize });
+    const zoto_dep = b.dependency("zoto", .{ .target = target, .optimize = optimize });
+    // dr_libs is a plain header-only C repo (no build.zig): we only need its files.
+    const drlibs_dep = b.dependency("dr_libs", .{});
+
+    const zigui_mod = zigui_dep.module("zigui");
+
+    // zigui's SDL3 window/event-loop runtime. The zigui package exports only the
+    // pure-Zig `zigui` module, so compile `src/app.zig` from the dependency
+    // directly (this is exactly what zigui's own examples do).
+    const app_mod = b.createModule(.{
+        .root_source_file = zigui_dep.path("src/app.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "zigui", .module = zigui_mod }},
+    });
+    linkSdl3(b, app_mod, sdl3_prefix);
+
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "zigui", .module = zigui_mod },
+            .{ .name = "zigui_app", .module = app_mod },
+            .{ .name = "zoto", .module = zoto_dep.module("zoto") },
+        },
+    });
+
+    // dr_mp3 / dr_flac / dr_wav implementations, compiled once in the C shim.
+    exe_mod.addIncludePath(drlibs_dep.path("."));
+    exe_mod.addCSourceFile(.{
+        .file = b.path("src/lm_decode.c"),
+        // Always optimize the decoders (they are very slow in Debug) and skip
+        // UBSan, which the single-header decoders trip on by design.
+        .flags = &.{ "-O2", "-fno-sanitize=undefined" },
+    });
+
+    const exe = b.addExecutable(.{ .name = "lmp3", .root_module = exe_mod });
+    b.installArtifact(exe);
+
+    if (sdl3_dll) |dll| {
+        b.getInstallStep().dependOn(&b.addInstallBinFile(.{ .cwd_relative = dll }, "SDL3.dll").step);
+    }
+
+    const run = b.addRunArtifact(exe);
+    run.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run.addArgs(args);
+    b.step("run", "Run the player (pass files/folders after --)").dependOn(&run.step);
+}
+
+fn linkSdl3(b: *std.Build, m: *std.Build.Module, prefix: ?[]const u8) void {
+    if (prefix) |p| {
+        m.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ p, "include" }) });
+        m.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ p, "lib" }) });
+    } else if (builtin.os.tag == .macos) {
+        // Same Homebrew layout zigui's own build.zig assumes.
+        const brew = if (builtin.cpu.arch == .aarch64) "/opt/homebrew/opt/sdl3" else "/usr/local/opt/sdl3";
+        m.addIncludePath(.{ .cwd_relative = brew ++ "/include" });
+        m.addLibraryPath(.{ .cwd_relative = brew ++ "/lib" });
+        m.addRPath(.{ .cwd_relative = brew ++ "/lib" });
+    }
+    m.linkSystemLibrary("SDL3", .{});
+}
