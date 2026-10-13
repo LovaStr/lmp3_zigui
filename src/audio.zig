@@ -2,6 +2,7 @@
 //! at most one `Player` streaming the currently loaded, fully decoded track.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const zoto = @import("zoto");
 const decoder = @import("decoder.zig");
 
@@ -82,7 +83,7 @@ pub const Audio = struct {
         return @as(f64, @floatFromInt(consumed / decoder.bytes_per_frame)) / @as(f64, decoder.sample_rate);
     }
 
-    /// Jump to `secs` in the loaded track. A fresh zoto player is created at the new
+    /// Jump to `secs` in the loaded track (the device buffer is flushed). A fresh zoto player is created at the new
     /// position (the old one is fully detached from the mixer first), which avoids
     /// racing the mixer thread over the shared reader. `keep_playing` resumes
     /// playback afterwards; otherwise the new player is left paused.
@@ -102,6 +103,10 @@ pub const Audio = struct {
         p.setVolume(self.volume);
         if (keep_playing) try p.play();
         self.player = p;
+        // Throw away what is already queued in the device buffer (old position)
+        // so the new position is heard immediately. (The zoto Windows driver in
+        // third_party/zoto provides `flush`.)
+        if (builtin.os.tag == .windows) self.ctx.flush();
     }
 
     pub fn durationSeconds(self: *Audio) f64 {

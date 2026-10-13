@@ -335,6 +335,8 @@ pub const Context = struct {
     mux: *Mux,
     mutex: Mutex,
     condition: Condition,
+    /// Held while the audio thread fills the device buffer, and by `flush`.
+    io_mutex: Mutex = .{},
     suspended: bool = false,
     ready: bool = false,
     err: ?anyerror = null,
@@ -431,7 +433,7 @@ pub const Context = struct {
         const hr4 = audio_client.?.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-            10000000, // 100ms buffer
+            1000000, // 100ms buffer (units are 100ns; upstream passed 10000000 = 1 s)
             0,
             &wave_format,
             null,
@@ -539,6 +541,61 @@ pub const Context = struct {
         return try self.mux.newPlayer(reader);
     }
 
+    /// Fill whatever room the device buffer has with mixed audio.
+    fn pump(ctx: *Context, buffer: *std.ArrayList(f32)) void {
+        ctx.io_mutex.lock();
+        defer ctx.io_mutex.unlock();
+
+        // Get current padding
+        var padding: UINT = 0;
+        const hr2 = ctx.audio_client.?.GetCurrentPadding(&padding);
+        if (hr2 < 0) return;
+
+        const frames_to_write = ctx.buffer_size_in_frames - padding;
+        if (frames_to_write == 0) return;
+
+        // Get buffer
+        var data: ?*BYTE = null;
+        const hr3 = ctx.render_client.?.GetBuffer(frames_to_write, &data);
+        if (hr3 < 0) return;
+
+        // Calculate buffer size in samples (frames * channels)
+        const buffer_len = frames_to_write * ctx.channel_count;
+
+        // Resize buffer if needed
+        if (buffer.capacity < buffer_len) {
+            buffer.ensureTotalCapacity(ctx.allocator, buffer_len) catch {
+                _ = ctx.render_client.?.ReleaseBuffer(0, 0);
+                return;
+            };
+        }
+        buffer.items.len = buffer_len;
+
+        // Read audio data from mux
+        ctx.mux.readFloat32s(buffer.items) catch {
+            _ = ctx.render_client.?.ReleaseBuffer(0, 0);
+            return;
+        };
+
+        // Copy to WASAPI buffer
+        const float_data: [*]f32 = @ptrCast(@alignCast(data));
+        @memcpy(float_data[0..buffer_len], buffer.items);
+
+        // Release buffer
+        _ = ctx.render_client.?.ReleaseBuffer(frames_to_write, 0);
+    }
+
+    /// Drop all audio already queued in the device buffer so that whatever the
+    /// players supply next is heard immediately (used when seeking).
+    pub fn flush(self: *Context) void {
+        self.io_mutex.lock();
+        defer self.io_mutex.unlock();
+        const ac = self.audio_client orelse return;
+        _ = ac.Stop();
+        _ = ac.vtable.Reset(ac);
+        _ = ac.Start();
+    }
+
     fn audioThread(ctx: *Context) void {
         // Start audio client
         const hr = ctx.audio_client.?.Start();
@@ -577,37 +634,7 @@ pub const Context = struct {
                 continue;
             }
 
-            // Get current padding
-            var padding: UINT = 0;
-            const hr2 = ctx.audio_client.?.GetCurrentPadding(&padding);
-            if (hr2 < 0) continue;
-
-            const frames_to_write = ctx.buffer_size_in_frames - padding;
-            if (frames_to_write == 0) continue;
-
-            // Get buffer
-            var data: ?*BYTE = null;
-            const hr3 = ctx.render_client.?.GetBuffer(frames_to_write, &data);
-            if (hr3 < 0) continue;
-
-            // Calculate buffer size in samples (frames * channels)
-            const buffer_len = frames_to_write * ctx.channel_count;
-
-            // Resize buffer if needed
-            if (buffer.capacity < buffer_len) {
-                buffer.ensureTotalCapacity(ctx.allocator, buffer_len) catch continue;
-            }
-            buffer.items.len = buffer_len;
-
-            // Read audio data from mux
-            ctx.mux.readFloat32s(buffer.items) catch continue;
-
-            // Copy to WASAPI buffer
-            const float_data: [*]f32 = @ptrCast(@alignCast(data));
-            @memcpy(float_data[0..buffer_len], buffer.items);
-
-            // Release buffer
-            _ = ctx.render_client.?.ReleaseBuffer(frames_to_write, 0);
+            pump(ctx, &buffer);
         }
     }
 };
