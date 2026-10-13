@@ -12,6 +12,14 @@
         // Added by `zig fetch --save` (see README.md); hashes come from the toolchain:
         //   zig fetch --save git+https://github.com/ddalcu/zigui
         //   zig fetch --save git+https://github.com/mackron/dr_libs
+        .zigui = .{
+            .url = "git+https://github.com/ddalcu/zigui#0ff39e9e5f06cc31dedb9aba8976416ffb4deec6",
+            .hash = "zigui-0.2.0-fjyMjYXhNgBOa5Mf1fOHC97CaMdPGgW1rKEo-K15zHU7",
+        },
+        .dr_libs = .{
+            .url = "git+https://github.com/mackron/dr_libs#dfe8377631000664666519fdb83da193fd8037f4",
+            .hash = "N-V-__8AAF4wEwDaaKSf7jM1_5eaPrvP9U4s4YPN7WSgNWeX",
+        },
     },
 
     .paths = .{

@@ -42,6 +42,8 @@ const AppState = struct {
     current: ?usize = null,
     /// The user paused playback (as opposed to the track having ended).
     paused: bool = false,
+    /// true: start the next track when one ends; false: stop after the current track.
+    auto_advance: bool = true,
     audio: ?Audio = null,
     volume: zigui.State(f32),
     list_scroll: zigui.ScrollState = .{},
@@ -210,6 +212,10 @@ fn onPrev(st: *AppState) void {
 fn onClear(st: *AppState) void {
     clearPlaylist(st);
 }
+fn onToggleAutoAdvance(st: *AppState) void {
+    st.auto_advance = !st.auto_advance;
+    st.setStatus("{s}", .{if (st.auto_advance) "Continuous playback" else "Stop after current track"});
+}
 
 const audio_filters = [_]app.FileFilter{
     .{ .name = "Audio files (mp3, flac, wav)", .pattern = "mp3;flac;wav" },
@@ -260,7 +266,10 @@ fn frameHook() void {
         if (now - since < 400) return;
         st.ended_at = null;
         const cur = st.current.?;
-        if (cur + 1 < st.entries.items.len) {
+        if (!st.auto_advance) {
+            stopAudio(st);
+            st.setStatus("Stopped after current track", .{});
+        } else if (cur + 1 < st.entries.items.len) {
             playIndex(st, cur + 1);
         } else {
             stopAudio(st);
@@ -344,6 +353,8 @@ fn controls(st: *AppState) zigui.View {
         zigui.IconButton(.chevron_left, 24, zigui.actionCtx(AppState, st, onPrev)),
         zigui.IconButton(if (playing) .pause else .play, 30, zigui.actionCtx(AppState, st, onPlayPause)),
         zigui.IconButton(.chevron_right, 24, zigui.actionCtx(AppState, st, onNext)),
+        // Auto-advance toggle: chevron = continue to next, pause = stop after this track.
+        zigui.IconButton(if (st.auto_advance) .chevron_right else .pause, 18, zigui.actionCtx(AppState, st, onToggleAutoAdvance)),
         zigui.Spacer(),
         zigui.Icon(.volume, 18, null),
         zigui.Slider(st.volume.binding(), 0, 1).frameWidth(140),
