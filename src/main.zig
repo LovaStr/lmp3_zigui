@@ -285,6 +285,26 @@ fn fmtTime(seconds: f64) []const u8 {
     return zigui.components.fmt("{d}:{d:0>2}", .{ total / 60, total % 60 });
 }
 
+/// The seek slider's binding: reads the playback position as a 0..1 fraction and
+/// seeks when the user clicks or drags it.
+fn seekGet(ctx: *anyopaque) f32 {
+    const st: *AppState = @ptrCast(@alignCast(ctx));
+    if (st.current == null) return 0;
+    const a = if (st.audio) |*au| au else return 0;
+    const dur = a.durationSeconds();
+    if (dur <= 0) return 0;
+    return @floatCast(@min(a.positionSeconds() / dur, 1.0));
+}
+
+fn seekSet(ctx: *anyopaque, v: f32) void {
+    const st: *AppState = @ptrCast(@alignCast(ctx));
+    if (st.current == null) return;
+    const a = if (st.audio) |*au| au else return;
+    a.seekSeconds(@as(f64, v) * a.durationSeconds(), !st.paused) catch |err| {
+        st.setStatus("Seek failed: {s}", .{@errorName(err)});
+    };
+}
+
 fn nowPlaying(st: *AppState) zigui.View {
     const c = colors();
 
@@ -304,13 +324,12 @@ fn nowPlaying(st: *AppState) zigui.View {
             dur = au.durationSeconds();
         }
     }
-    const frac: f32 = if (dur > 0) @floatCast(@min(pos / dur, 1.0)) else 0;
 
     return zigui.VStack(.{
         zigui.Icon(.audio_lines, 44, c.accent),
         zigui.Text(title).font(.title2).truncated(),
         zigui.Text(subtitle).font(.subheadline).foreground(c.secondary_label),
-        zigui.ProgressView(frac).frameMaxWidth(),
+        zigui.Slider(.{ .ctx = st, .getFn = seekGet, .setFn = seekSet }, 0, 1).frameMaxWidth(),
         zigui.HStack(.{
             zigui.Text(fmtTime(pos)).font(.caption).foreground(c.secondary_label),
             zigui.Spacer(),

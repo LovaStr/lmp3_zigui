@@ -82,6 +82,28 @@ pub const Audio = struct {
         return @as(f64, @floatFromInt(consumed / decoder.bytes_per_frame)) / @as(f64, decoder.sample_rate);
     }
 
+    /// Jump to `secs` in the loaded track. A fresh zoto player is created at the new
+    /// position (the old one is fully detached from the mixer first), which avoids
+    /// racing the mixer thread over the shared reader. `keep_playing` resumes
+    /// playback afterwards; otherwise the new player is left paused.
+    pub fn seekSeconds(self: *Audio, secs: f64, keep_playing: bool) !void {
+        const t = self.track orelse return;
+        if (self.player) |p| {
+            p.pause();
+            p.deinit();
+            self.player = null;
+        }
+        const total: f64 = @floatFromInt(t.frameCount());
+        const frame: usize = @intFromFloat(std.math.clamp(secs * @as(f64, decoder.sample_rate), 0.0, total));
+        t.reader.seek = frame * decoder.bytes_per_frame;
+
+        const p = try self.ctx.newPlayer(&t.reader);
+        errdefer p.deinit();
+        p.setVolume(self.volume);
+        if (keep_playing) try p.play();
+        self.player = p;
+    }
+
     pub fn durationSeconds(self: *Audio) f64 {
         return if (self.track) |t| t.durationSeconds() else 0;
     }
