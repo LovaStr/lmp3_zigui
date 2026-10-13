@@ -16,6 +16,8 @@ pub fn build(b: *std.Build) void {
         "Path to SDL3.dll to copy next to the executable (Windows)",
     );
 
+    const console = b.option(bool, "console", "Keep a console window on Windows (shows logs/errors)") orelse false;
+
     const zigui_dep = b.dependency("zigui", .{ .target = target, .optimize = optimize });
     const zoto_dep = b.dependency("zoto", .{ .target = target, .optimize = optimize });
     // dr_libs is a plain header-only C repo (no build.zig): we only need its files.
@@ -57,6 +59,8 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{ .name = "lmp3", .root_module = exe_mod });
+    // Windows: a GUI-subsystem exe opens only the player window, no console.
+    if (target.result.os.tag == .windows and !console) exe.subsystem = .windows;
     b.installArtifact(exe);
 
     if (sdl3_dll) |dll| {

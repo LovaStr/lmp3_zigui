@@ -24,6 +24,8 @@ zig build -Doptimize=ReleaseFast -Dsdl3-prefix=C:\sdk\SDL3-3.4.8\x86_64-w64-ming
 zig-out\bin\lmp3.exe "C:\Users\you\Music"
 ```
 
+The exe is a GUI-subsystem program (no console window). Add `-Dconsole=true` to get a console for logs/errors.
+
 Linux/macOS are not set up in this copy (the vendored zoto only wires the Windows driver).
 
 ## Use
