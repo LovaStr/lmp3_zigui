@@ -353,12 +353,28 @@ fn controls(st: *AppState) zigui.View {
         zigui.IconButton(.chevron_left, 24, zigui.actionCtx(AppState, st, onPrev)),
         zigui.IconButton(if (playing) .pause else .play, 30, zigui.actionCtx(AppState, st, onPlayPause)),
         zigui.IconButton(.chevron_right, 24, zigui.actionCtx(AppState, st, onNext)),
-        // Auto-advance toggle: chevron = continue to next, pause = stop after this track.
-        zigui.IconButton(if (st.auto_advance) .chevron_right else .pause, 18, zigui.actionCtx(AppState, st, onToggleAutoAdvance)),
+        autoAdvanceToggle(st),
         zigui.Spacer(),
         zigui.Icon(.volume, 18, null),
         zigui.Slider(st.volume.binding(), 0, 1).frameWidth(140),
     }).spacing(14).paddingInsets(.{ .top = 10, .leading = 16, .bottom = 10, .trailing = 16 });
+}
+
+/// Toggle between "-> continue to the next track" and ">| stop after this track".
+/// zigui has no skip/stop-bar glyph, so ">|" is a chevron plus a thin bar.
+fn autoAdvanceToggle(st: *AppState) zigui.View {
+    const c = colors();
+    const glyph: zigui.View = if (st.auto_advance)
+        zigui.Icon(.arrow_right, 20, null)
+    else
+        zigui.HStack(.{
+            zigui.Icon(.chevron_right, 20, null),
+            zigui.Rectangle(c.label).frame(2, 14),
+        }).spacing(0);
+    return zigui.HStack(.{glyph})
+        .frame(30, 28)
+        .hoverFill(c.hover)
+        .onTap(zigui.actionCtx(AppState, st, onToggleAutoAdvance));
 }
 
 fn playlistHeader(st: *AppState) zigui.View {
