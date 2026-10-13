@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{.{ .name = "zigui", .module = zigui_mod }},
     });
-    linkSdl3(b, app_mod, sdl3_prefix);
+    linkSdl3(b, app_mod, target.result.os.tag, sdl3_prefix);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -69,10 +69,16 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Run the player (pass files/folders after --)").dependOn(&run.step);
 }
 
-fn linkSdl3(b: *std.Build, m: *std.Build.Module, prefix: ?[]const u8) void {
+fn linkSdl3(b: *std.Build, m: *std.Build.Module, os: std.Target.Os.Tag, prefix: ?[]const u8) void {
     if (prefix) |p| {
         m.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ p, "include" }) });
         m.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ p, "lib" }) });
+        if (os == .windows) {
+            // The MinGW SDL3 package ships an import library named libSDL3.dll.a,
+            // which -lSDL3 does not find; link it directly.
+            m.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ p, "lib", "libSDL3.dll.a" }) });
+            return;
+        }
     } else if (builtin.os.tag == .macos) {
         // Same Homebrew layout zigui's own build.zig assumes.
         const brew = if (builtin.cpu.arch == .aarch64) "/opt/homebrew/opt/sdl3" else "/usr/local/opt/sdl3";

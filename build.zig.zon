@@ -2,21 +2,23 @@
     .name = .lmp3_zigui,
     .version = "0.1.0",
     .fingerprint = 0x938cb70b5a17c0de,
-    // zoto targets Zig 0.17-dev (std.Io.Reader/Mutex); zigui needs >= 0.16.
-    .minimum_zig_version = "0.17.0",
+    // zigui does not build on 0.17 (@cImport was removed); zoto's Windows driver
+    // needed patching for 0.16 (see third_party/zoto/PATCHES.md).
+    .minimum_zig_version = "0.16.0",
 
-    // Filled in by `zig fetch --save` (see README.md); the content hashes can
-    // only be computed by the Zig toolchain:
-    //
-    //   zig fetch --save git+https://github.com/ddalcu/zigui
-    //   zig fetch --save git+https://github.com/braheezy/zoto
-    //   zig fetch --save git+https://github.com/mackron/dr_libs
-    .dependencies = .{},
+    .dependencies = .{
+        // Vendored + patched, Windows only.
+        .zoto = .{ .path = "third_party/zoto" },
+        // Added by `zig fetch --save` (see README.md); hashes come from the toolchain:
+        //   zig fetch --save git+https://github.com/ddalcu/zigui
+        //   zig fetch --save git+https://github.com/mackron/dr_libs
+    },
 
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "third_party",
         "README.md",
     },
 }

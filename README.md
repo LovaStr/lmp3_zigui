@@ -9,27 +9,22 @@ controls and volume, and the play list.
 | Decoding (MP3 / FLAC / WAV) | [mackron/dr_libs](https://github.com/mackron/dr_libs) (compiled via `src/lm_decode.c`) |
 | Playback | [braheezy/zoto](https://github.com/braheezy/zoto) |
 
-## Build
+## Build (Windows)
 
-Needs a Zig new enough for **zoto (0.17-dev)** and **zigui (>= 0.16)**, plus SDL3
-(zigui's window layer).
+A prebuilt `dist/lmp3.exe` (+ `SDL3.dll`) is included. To rebuild you need **Zig 0.16.0**
+(zigui does not build on 0.17; zoto upstream does not build its Windows driver on 0.16 or
+0.17, so a patched copy is vendored in `third_party/zoto`, see `PATCHES.md`).
 
 ```sh
-# one-time: record the dependencies (writes URLs + hashes into build.zig.zon)
 zig fetch --save git+https://github.com/ddalcu/zigui
-zig fetch --save git+https://github.com/braheezy/zoto
 zig fetch --save git+https://github.com/mackron/dr_libs
 
-zig build -Doptimize=ReleaseFast run -- "C:\Users\you\Music"
+# SDL3-devel-3.4.8-mingw.tar.gz from https://github.com/libsdl-org/SDL/releases, extracted to C:\sdk
+zig build -Doptimize=ReleaseFast -Dsdl3-prefix=C:\sdk\SDL3-3.4.8\x86_64-w64-mingw32 -Dsdl3-dll=C:\sdk\SDL3-3.4.8\x86_64-w64-mingw32\bin\SDL3.dll
+zig-out\bin\lmp3.exe "C:\Users\you\Music"
 ```
 
-SDL3 development files:
-
-* **Windows**: download `SDL3-devel-<ver>-mingw.tar.gz` from the SDL releases page,
-  extract it, then pass the `x86_64-w64-mingw32` folder and the DLL:
-  `zig build -Doptimize=ReleaseFast -Dsdl3-prefix=C:\sdk\SDL3\x86_64-w64-mingw32 -Dsdl3-dll=C:\sdk\SDL3\x86_64-w64-mingw32\bin\SDL3.dll`
-* **macOS**: `brew install sdl3`
-* **Linux**: install your distro's SDL3 and ALSA dev packages (`libasound2-dev`).
+Linux/macOS are not set up in this copy (the vendored zoto only wires the Windows driver).
 
 ## Use
 

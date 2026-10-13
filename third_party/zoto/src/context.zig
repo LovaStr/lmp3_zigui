@@ -1,0 +1,52 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const Format = @import("mux.zig").Format;
+
+var context_created: bool = false;
+var context_creation_mutex: if (builtin.single_threaded) struct {} else std.Io.Mutex = if (builtin.single_threaded) .{} else .init;
+
+pub const Options = struct {
+    sample_rate: u32,
+    channel_count: u8,
+    format: Format,
+    buffer_size: i64 = 0,
+};
+
+pub const Context = switch (builtin.os.tag) {
+    .macos => @import("driver_darwin.zig").Context,
+    .linux => @import("driver_unix.zig").Context,
+    .windows => @import("driver_windows.zig").Context,
+    .wasi, .freestanding => @import("driver_js.zig").Context, // Both WASI and freestanding use JS driver for browser
+    else => @compileError("Unsupported platform"),
+};
+
+pub fn newContext(allocator: std.mem.Allocator, options: Options) !*Context {
+    if (!builtin.single_threaded)
+        context_creation_mutex.lockUncancelable(std.Options.debug_io);
+    defer if (!builtin.single_threaded)
+        context_creation_mutex.unlock(std.Options.debug_io);
+
+    if (context_created) {
+        return error.ContextAlreadyCreated;
+    }
+
+    var buffer_size_in_bytes: u32 = 0;
+    if (options.buffer_size != 0) {
+        // the underlying driver always uses 32bit floats
+        const bytes_per_sample = options.channel_count * 4;
+        const bytes_per_second = options.sample_rate * bytes_per_sample;
+        buffer_size_in_bytes = @intCast(@divFloor(options.buffer_size * bytes_per_second, std.time.ns_per_s));
+        buffer_size_in_bytes = buffer_size_in_bytes / bytes_per_sample * bytes_per_sample;
+    }
+
+    const ctx = try Context.init(
+        allocator,
+        options.sample_rate,
+        options.channel_count,
+        options.format,
+        buffer_size_in_bytes,
+    );
+
+    context_created = true;
+    return ctx;
+}

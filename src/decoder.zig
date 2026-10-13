@@ -103,12 +103,12 @@ fn resample(gpa: std.mem.Allocator, in: []const f32, in_rate: u32) Error![]f32 {
     const out = try gpa.alloc(f32, out_frames * 2);
     for (0..out_frames) |i| {
         const pos = @as(f64, @floatFromInt(i)) * ratio;
-        const i0: usize = @intFromFloat(pos);
-        const i1 = @min(i0 + 1, in_frames - 1);
-        const t: f32 = @floatCast(pos - @as(f64, @floatFromInt(i0)));
+        const ia: usize = @intFromFloat(pos);
+        const ib = @min(ia + 1, in_frames - 1);
+        const t: f32 = @floatCast(pos - @as(f64, @floatFromInt(ia)));
         inline for (0..2) |ch| {
-            const a = in[i0 * 2 + ch];
-            const b = in[i1 * 2 + ch];
+            const a = in[ia * 2 + ch];
+            const b = in[ib * 2 + ch];
             out[i * 2 + ch] = a + (b - a) * t;
         }
     }
