@@ -243,7 +243,12 @@ fn frameHook() void {
     a.setVolume(st.volume.get());
 
     // A track that was playing and has stopped by itself has ended: advance
-    // (after a short grace period so the device can play out its buffer).
+    // (after a short grace period so the device can play out its buffer). With
+    // no player at all (e.g. a failed seek) nothing ended, so do not advance.
+    if (!a.hasPlayer()) {
+        st.ended_at = null;
+        return;
+    }
     const step = transport.trackEnd(.{
         .current = st.current,
         .paused = st.paused,
@@ -298,6 +303,9 @@ fn seekSet(ctx: *anyopaque, v: f32) void {
     if (st.current == null) return;
     const a = if (st.audio) |*au| au else return;
     a.seekSeconds(@as(f64, v) * a.durationSeconds(), !st.paused) catch |err| {
+        // The old player is already gone; stop instead of letting the track-end
+        // detection mistake the missing player for a finished track.
+        stopAudio(st);
         st.setStatus("Seek failed: {s}", .{@errorName(err)});
     };
 }
