@@ -10,6 +10,8 @@ const std = @import("std");
 const zigui = @import("zigui");
 const app = @import("zigui_app");
 const decoder = @import("decoder.zig");
+const util = @import("util.zig");
+const transport = @import("transport.zig");
 const Audio = @import("audio.zig").Audio;
 
 const sdl = app.c;
@@ -71,26 +73,15 @@ var g_app: ?*AppState = null;
 
 // --- play list --------------------------------------------------------------
 
-fn baseName(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfAny(u8, path, "/\\");
-    return if (slash) |i| path[i + 1 ..] else path;
-}
-
-fn titleOf(path: []const u8) []const u8 {
-    const name = baseName(path);
-    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
-    return if (dot == 0) name else name[0..dot];
-}
-
 fn lessThan(_: void, a: Entry, b: Entry) bool {
-    return std.ascii.lessThanIgnoreCase(a.path, b.path);
+    return util.pathLessThan(a.path, b.path);
 }
 
 /// Append one audio file to the play list (unsupported extensions are ignored).
 fn addFile(st: *AppState, path: []const u8) void {
     if (!decoder.isSupported(path)) return;
     const owned = st.gpa.dupe(u8, path) catch return;
-    const title = st.gpa.dupe(u8, titleOf(path)) catch {
+    const title = st.gpa.dupe(u8, util.titleOf(path)) catch {
         st.gpa.free(owned);
         return;
     };
@@ -187,15 +178,11 @@ fn togglePlayPause(st: *AppState) void {
 }
 
 fn nextTrack(st: *AppState) void {
-    const n = st.entries.items.len;
-    if (n == 0) return;
-    playIndex(st, if (st.current) |c| (c + 1) % n else 0);
+    if (transport.nextIndex(st.current, st.entries.items.len)) |i| playIndex(st, i);
 }
 
 fn prevTrack(st: *AppState) void {
-    const n = st.entries.items.len;
-    if (n == 0) return;
-    playIndex(st, if (st.current) |c| (c + n - 1) % n else 0);
+    if (transport.prevIndex(st.current, st.entries.items.len)) |i| playIndex(st, i);
 }
 
 // --- callbacks --------------------------------------------------------------
@@ -257,26 +244,27 @@ fn frameHook() void {
 
     // A track that was playing and has stopped by itself has ended: advance
     // (after a short grace period so the device can play out its buffer).
-    if (st.isPlaying() and !a.isPlaying()) {
-        const now = sdl.SDL_GetTicks();
-        const since = st.ended_at orelse blk: {
-            st.ended_at = now;
-            break :blk now;
-        };
-        if (now - since < 400) return;
-        st.ended_at = null;
-        const cur = st.current.?;
-        if (!st.auto_advance) {
+    const step = transport.trackEnd(.{
+        .current = st.current,
+        .paused = st.paused,
+        .device_playing = a.isPlaying(),
+        .now = sdl.SDL_GetTicks(),
+        .ended_at = st.ended_at,
+        .len = st.entries.items.len,
+        .auto_advance = st.auto_advance,
+    });
+    st.ended_at = step.ended_at;
+    switch (step.action) {
+        .none => {},
+        .play => |i| playIndex(st, i),
+        .stop_after_track => {
             stopAudio(st);
             st.setStatus("Stopped after current track", .{});
-        } else if (cur + 1 < st.entries.items.len) {
-            playIndex(st, cur + 1);
-        } else {
+        },
+        .stop_end_of_list => {
             stopAudio(st);
             st.setStatus("Reached the end of the play list", .{});
-        }
-    } else {
-        st.ended_at = null;
+        },
     }
 }
 
@@ -290,8 +278,8 @@ fn busyCheck() bool {
 // --- views ------------------------------------------------------------------
 
 fn fmtTime(seconds: f64) []const u8 {
-    const total: u64 = @intFromFloat(@max(seconds, 0));
-    return zigui.components.fmt("{d}:{d:0>2}", .{ total / 60, total % 60 });
+    const t = util.splitTime(seconds);
+    return zigui.components.fmt("{d}:{d:0>2}", .{ t.minutes, t.seconds });
 }
 
 /// The seek slider's binding: reads the playback position as a 0..1 fraction and

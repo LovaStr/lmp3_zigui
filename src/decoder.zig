@@ -96,7 +96,8 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8) Error!*Track {
     return track;
 }
 
-fn resample(gpa: std.mem.Allocator, in: []const f32, in_rate: u32) Error![]f32 {
+/// Linear-interpolation resampler for interleaved stereo (`in.len` is even).
+pub fn resample(gpa: std.mem.Allocator, in: []const f32, in_rate: u32) Error![]f32 {
     const in_frames = in.len / 2;
     const ratio = @as(f64, @floatFromInt(in_rate)) / @as(f64, sample_rate);
     const out_frames: usize = @intFromFloat(@as(f64, @floatFromInt(in_frames)) / ratio);

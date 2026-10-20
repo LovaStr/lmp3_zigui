@@ -49,14 +49,7 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // dr_mp3 / dr_flac / dr_wav implementations, compiled once in the C shim.
-    exe_mod.addIncludePath(drlibs_dep.path("."));
-    exe_mod.addCSourceFile(.{
-        .file = b.path("src/lm_decode.c"),
-        // Always optimize the decoders (they are very slow in Debug) and skip
-        // UBSan, which the single-header decoders trip on by design.
-        .flags = &.{ "-O2", "-fno-sanitize=undefined" },
-    });
+    addDecoderC(b, exe_mod, drlibs_dep);
 
     const exe = b.addExecutable(.{ .name = "lmp3", .root_module = exe_mod });
     // Windows: a GUI-subsystem exe opens only the player window, no console.
@@ -71,6 +64,60 @@ pub fn build(b: *std.Build) void {
     run.step.dependOn(b.getInstallStep());
     if (b.args) |args| run.addArgs(args);
     b.step("run", "Run the player (pass files/folders after --)").dependOn(&run.step);
+
+    // Unit tests (tests/*.zig). They only need the decoder and its C shim, so
+    // neither SDL3 nor zigui is required: plain `zig build test` works.
+    const decoder_mod = b.createModule(.{
+        .root_source_file = b.path("src/decoder.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    addDecoderC(b, decoder_mod, drlibs_dep);
+
+    const test_step = b.step("test", "Run unit tests");
+    addUnitTest(b, test_step, target, optimize, "tests/decoder_test.zig", "decoder", decoder_mod);
+    // Pure modules with no dependencies of their own.
+    for ([_][]const u8{ "util", "transport" }) |name| {
+        const mod = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/{s}.zig", .{name})),
+            .target = target,
+            .optimize = optimize,
+        });
+        addUnitTest(b, test_step, target, optimize, b.fmt("tests/{s}_test.zig", .{name}), name, mod);
+    }
+}
+
+/// Compile `test_file` with `mod` importable as `import_name`, and run it as part of `step`.
+fn addUnitTest(
+    b: *std.Build,
+    step: *std.Build.Step,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    test_file: []const u8,
+    import_name: []const u8,
+    mod: *std.Build.Module,
+) void {
+    const t = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(test_file),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = import_name, .module = mod }},
+        }),
+    });
+    step.dependOn(&b.addRunArtifact(t).step);
+}
+
+/// dr_mp3 / dr_flac / dr_wav implementations, compiled once in the C shim.
+fn addDecoderC(b: *std.Build, m: *std.Build.Module, drlibs_dep: *std.Build.Dependency) void {
+    m.addIncludePath(drlibs_dep.path("."));
+    m.addCSourceFile(.{
+        .file = b.path("src/lm_decode.c"),
+        // Always optimize the decoders (they are very slow in Debug) and skip
+        // UBSan, which the single-header decoders trip on by design.
+        .flags = &.{ "-O2", "-fno-sanitize=undefined" },
+    });
 }
 
 fn linkSdl3(b: *std.Build, m: *std.Build.Module, os: std.Target.Os.Tag, prefix: ?[]const u8) void {
