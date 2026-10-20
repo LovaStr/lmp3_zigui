@@ -14,7 +14,22 @@ extern "c" fn lm_open(path: [*:0]const u8, channels: *u32, sample_rate: *u32) ?*
 extern "c" fn lm_read_f32(h: *Handle, frames: u64, out: [*]f32) u64;
 extern "c" fn lm_close(h: *Handle) void;
 
-pub const Error = error{ OpenFailed, UnsupportedChannelCount, EmptyAudio, OutOfMemory };
+/// Source sample rates outside this range are rejected: the rate comes straight
+/// from the (untrusted) file header and sizes the resampler's output buffer.
+pub const min_source_rate: u32 = 8_000;
+pub const max_source_rate: u32 = 384_000;
+
+/// Longest track that is decoded into memory (about 2.5 GB of float32 stereo).
+pub const max_track_seconds: u64 = 2 * 60 * 60;
+
+pub const Error = error{
+    OpenFailed,
+    UnsupportedChannelCount,
+    UnsupportedSampleRate,
+    TooLong,
+    EmptyAudio,
+    OutOfMemory,
+};
 
 /// A fully decoded track. Heap-allocated (see `load`) so `reader` has a stable
 /// address: zoto's player keeps a pointer to it.
@@ -47,6 +62,10 @@ pub fn isSupported(path: []const u8) bool {
         std.ascii.eqlIgnoreCase(ext, ".wav");
 }
 
+fn validSourceRate(rate: u32) bool {
+    return rate >= min_source_rate and rate <= max_source_rate;
+}
+
 /// Decode the whole file to stereo @ 44.1 kHz float32.
 pub fn load(gpa: std.mem.Allocator, path: []const u8) Error!*Track {
     const cpath = try gpa.dupeZ(u8, path);
@@ -56,7 +75,9 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8) Error!*Track {
     var src_rate: u32 = 0;
     const h = lm_open(cpath.ptr, &src_channels, &src_rate) orelse return error.OpenFailed;
     defer lm_close(h);
-    if (src_channels == 0 or src_channels > 8 or src_rate == 0) return error.UnsupportedChannelCount;
+    if (src_channels == 0 or src_channels > 8) return error.UnsupportedChannelCount;
+    if (!validSourceRate(src_rate)) return error.UnsupportedSampleRate;
+    const max_src_frames: usize = @intCast(max_track_seconds * src_rate);
 
     const chunk_frames: usize = 4096;
     const chunk = try gpa.alloc(f32, chunk_frames * src_channels);
@@ -68,6 +89,7 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8) Error!*Track {
     while (true) {
         const got: usize = @intCast(lm_read_f32(h, chunk_frames, chunk.ptr));
         if (got == 0) break;
+        if (stereo.items.len / 2 + got > max_src_frames) return error.TooLong;
         try stereo.ensureUnusedCapacity(gpa, got * 2);
         for (0..got) |i| {
             const f = chunk[i * src_channels ..][0..src_channels];
@@ -98,6 +120,7 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8) Error!*Track {
 
 /// Linear-interpolation resampler for interleaved stereo (`in.len` is even).
 pub fn resample(gpa: std.mem.Allocator, in: []const f32, in_rate: u32) Error![]f32 {
+    if (!validSourceRate(in_rate)) return error.UnsupportedSampleRate;
     const in_frames = in.len / 2;
     const ratio = @as(f64, @floatFromInt(in_rate)) / @as(f64, sample_rate);
     const out_frames: usize = @intFromFloat(@as(f64, @floatFromInt(in_frames)) / ratio);
