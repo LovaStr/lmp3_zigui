@@ -75,32 +75,38 @@ pub fn build(b: *std.Build) void {
     });
     addDecoderC(b, decoder_mod, drlibs_dep);
 
-    const decoder_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/decoder_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "decoder", .module = decoder_mod }},
-        }),
-    });
-
-    const util_mod = b.createModule(.{
-        .root_source_file = b.path("src/util.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const util_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/util_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "util", .module = util_mod }},
-        }),
-    });
-
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&b.addRunArtifact(decoder_tests).step);
-    test_step.dependOn(&b.addRunArtifact(util_tests).step);
+    addUnitTest(b, test_step, target, optimize, "tests/decoder_test.zig", "decoder", decoder_mod);
+    // Pure modules with no dependencies of their own.
+    for ([_][]const u8{ "util", "transport" }) |name| {
+        const mod = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/{s}.zig", .{name})),
+            .target = target,
+            .optimize = optimize,
+        });
+        addUnitTest(b, test_step, target, optimize, b.fmt("tests/{s}_test.zig", .{name}), name, mod);
+    }
+}
+
+/// Compile `test_file` with `mod` importable as `import_name`, and run it as part of `step`.
+fn addUnitTest(
+    b: *std.Build,
+    step: *std.Build.Step,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    test_file: []const u8,
+    import_name: []const u8,
+    mod: *std.Build.Module,
+) void {
+    const t = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(test_file),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = import_name, .module = mod }},
+        }),
+    });
+    step.dependOn(&b.addRunArtifact(t).step);
 }
 
 /// dr_mp3 / dr_flac / dr_wav implementations, compiled once in the C shim.

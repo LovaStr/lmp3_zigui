@@ -11,6 +11,7 @@ const zigui = @import("zigui");
 const app = @import("zigui_app");
 const decoder = @import("decoder.zig");
 const util = @import("util.zig");
+const transport = @import("transport.zig");
 const Audio = @import("audio.zig").Audio;
 
 const sdl = app.c;
@@ -177,15 +178,11 @@ fn togglePlayPause(st: *AppState) void {
 }
 
 fn nextTrack(st: *AppState) void {
-    const n = st.entries.items.len;
-    if (n == 0) return;
-    playIndex(st, if (st.current) |c| (c + 1) % n else 0);
+    if (transport.nextIndex(st.current, st.entries.items.len)) |i| playIndex(st, i);
 }
 
 fn prevTrack(st: *AppState) void {
-    const n = st.entries.items.len;
-    if (n == 0) return;
-    playIndex(st, if (st.current) |c| (c + n - 1) % n else 0);
+    if (transport.prevIndex(st.current, st.entries.items.len)) |i| playIndex(st, i);
 }
 
 // --- callbacks --------------------------------------------------------------
@@ -247,26 +244,27 @@ fn frameHook() void {
 
     // A track that was playing and has stopped by itself has ended: advance
     // (after a short grace period so the device can play out its buffer).
-    if (st.isPlaying() and !a.isPlaying()) {
-        const now = sdl.SDL_GetTicks();
-        const since = st.ended_at orelse blk: {
-            st.ended_at = now;
-            break :blk now;
-        };
-        if (now - since < 400) return;
-        st.ended_at = null;
-        const cur = st.current.?;
-        if (!st.auto_advance) {
+    const step = transport.trackEnd(.{
+        .current = st.current,
+        .paused = st.paused,
+        .device_playing = a.isPlaying(),
+        .now = sdl.SDL_GetTicks(),
+        .ended_at = st.ended_at,
+        .len = st.entries.items.len,
+        .auto_advance = st.auto_advance,
+    });
+    st.ended_at = step.ended_at;
+    switch (step.action) {
+        .none => {},
+        .play => |i| playIndex(st, i),
+        .stop_after_track => {
             stopAudio(st);
             st.setStatus("Stopped after current track", .{});
-        } else if (cur + 1 < st.entries.items.len) {
-            playIndex(st, cur + 1);
-        } else {
+        },
+        .stop_end_of_list => {
             stopAudio(st);
             st.setStatus("Reached the end of the play list", .{});
-        }
-    } else {
-        st.ended_at = null;
+        },
     }
 }
 
