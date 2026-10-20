@@ -10,6 +10,7 @@ const std = @import("std");
 const zigui = @import("zigui");
 const app = @import("zigui_app");
 const decoder = @import("decoder.zig");
+const util = @import("util.zig");
 const Audio = @import("audio.zig").Audio;
 
 const sdl = app.c;
@@ -71,26 +72,15 @@ var g_app: ?*AppState = null;
 
 // --- play list --------------------------------------------------------------
 
-fn baseName(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfAny(u8, path, "/\\");
-    return if (slash) |i| path[i + 1 ..] else path;
-}
-
-fn titleOf(path: []const u8) []const u8 {
-    const name = baseName(path);
-    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
-    return if (dot == 0) name else name[0..dot];
-}
-
 fn lessThan(_: void, a: Entry, b: Entry) bool {
-    return std.ascii.lessThanIgnoreCase(a.path, b.path);
+    return util.pathLessThan(a.path, b.path);
 }
 
 /// Append one audio file to the play list (unsupported extensions are ignored).
 fn addFile(st: *AppState, path: []const u8) void {
     if (!decoder.isSupported(path)) return;
     const owned = st.gpa.dupe(u8, path) catch return;
-    const title = st.gpa.dupe(u8, titleOf(path)) catch {
+    const title = st.gpa.dupe(u8, util.titleOf(path)) catch {
         st.gpa.free(owned);
         return;
     };
@@ -290,8 +280,8 @@ fn busyCheck() bool {
 // --- views ------------------------------------------------------------------
 
 fn fmtTime(seconds: f64) []const u8 {
-    const total: u64 = @intFromFloat(@max(seconds, 0));
-    return zigui.components.fmt("{d}:{d:0>2}", .{ total / 60, total % 60 });
+    const t = util.splitTime(seconds);
+    return zigui.components.fmt("{d}:{d:0>2}", .{ t.minutes, t.seconds });
 }
 
 /// The seek slider's binding: reads the playback position as a 0..1 fraction and

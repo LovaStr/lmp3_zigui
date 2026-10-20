@@ -84,8 +84,23 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const util_mod = b.createModule(.{
+        .root_source_file = b.path("src/util.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const util_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/util_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "util", .module = util_mod }},
+        }),
+    });
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(decoder_tests).step);
+    test_step.dependOn(&b.addRunArtifact(util_tests).step);
 }
 
 /// dr_mp3 / dr_flac / dr_wav implementations, compiled once in the C shim.
