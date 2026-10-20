@@ -121,7 +121,43 @@ test "resample 48 kHz -> 44.1 kHz gives about 44100 frames per second" {
     try std.testing.expect(@abs(frames - 44100) <= 1);
 }
 
+test "resample rejects source rates outside the supported range" {
+    const in = [_]f32{ 0, 0 } ** 100;
+    try std.testing.expectError(error.UnsupportedSampleRate, decoder.resample(gpa, &in, 0));
+    try std.testing.expectError(error.UnsupportedSampleRate, decoder.resample(gpa, &in, decoder.min_source_rate - 1));
+    try std.testing.expectError(error.UnsupportedSampleRate, decoder.resample(gpa, &in, decoder.max_source_rate + 1));
+    try std.testing.expectError(error.UnsupportedSampleRate, decoder.resample(gpa, &in, std.math.maxInt(u32)));
+}
+
+test "resample accepts the edges of the supported range" {
+    const in = [_]f32{ 0, 0 } ** 100;
+    const lo = try decoder.resample(gpa, &in, decoder.min_source_rate);
+    gpa.free(lo);
+    const hi = try decoder.resample(gpa, &in, decoder.max_source_rate);
+    gpa.free(hi);
+}
+
 // --- load -------------------------------------------------------------------
+
+test "load rejects a WAV with a sample rate below the supported range" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(decoder.min_source_rate - 1, 100, &.{ 0, 0 });
+    defer gpa.free(wav);
+    const path = try writeFixture(&tmp, "slow_rate.wav", wav);
+    defer gpa.free(path);
+    try std.testing.expectError(error.UnsupportedSampleRate, decoder.load(gpa, path));
+}
+
+test "load rejects a WAV with a sample rate above the supported range" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(decoder.max_source_rate + 1, 100, &.{ 0, 0 });
+    defer gpa.free(wav);
+    const path = try writeFixture(&tmp, "fast_rate.wav", wav);
+    defer gpa.free(path);
+    try std.testing.expectError(error.UnsupportedSampleRate, decoder.load(gpa, path));
+}
 
 test "load keeps a 44.1 kHz stereo file as is" {
     var tmp = std.testing.tmpDir(.{});
