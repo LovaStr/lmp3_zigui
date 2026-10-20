@@ -1,16 +1,258 @@
-//! Decoder tests. This file only proves the test wiring for now (`zig build test`
-//! compiles the decoder module together with the C shim); real cases follow.
+//! Decoder tests. WAV fixtures are generated in a temporary directory by the
+//! tests themselves, so no binary files are stored in the repository.
 
 const std = @import("std");
 const decoder = @import("decoder");
+
+const gpa = std.testing.allocator;
+const expectEqual = std.testing.expectEqual;
+const expectApproxEqAbs = std.testing.expectApproxEqAbs;
+
+// --- fixture helpers --------------------------------------------------------
+
+const WavFormat = enum(u16) { pcm = 1, float = 3 };
+
+fn appendInt(list: *std.ArrayList(u8), comptime T: type, v: T) !void {
+    try list.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToLittle(T, v)));
+}
+
+/// A canonical 44-byte-header WAV file around `data`.
+fn buildWav(fmt: WavFormat, channels: u16, rate: u32, bits: u16, data: []const u8) ![]u8 {
+    var w: std.ArrayList(u8) = .empty;
+    errdefer w.deinit(gpa);
+    const block: u16 = channels * (bits / 8);
+    try w.appendSlice(gpa, "RIFF");
+    try appendInt(&w, u32, @intCast(36 + data.len));
+    try w.appendSlice(gpa, "WAVEfmt ");
+    try appendInt(&w, u32, 16);
+    try appendInt(&w, u16, @intFromEnum(fmt));
+    try appendInt(&w, u16, channels);
+    try appendInt(&w, u32, rate);
+    try appendInt(&w, u32, rate * block);
+    try appendInt(&w, u16, block);
+    try appendInt(&w, u16, bits);
+    try w.appendSlice(gpa, "data");
+    try appendInt(&w, u32, @intCast(data.len));
+    try w.appendSlice(gpa, data);
+    return w.toOwnedSlice(gpa);
+}
+
+/// 16-bit PCM WAV where every frame repeats `values` (one value per channel).
+fn pcm16Wav(rate: u32, frames: usize, values: []const i16) ![]u8 {
+    var data: std.ArrayList(u8) = .empty;
+    defer data.deinit(gpa);
+    for (0..frames) |_| for (values) |v| try appendInt(&data, i16, v);
+    return buildWav(.pcm, @intCast(values.len), rate, 16, data.items);
+}
+
+/// 32-bit float WAV where every frame repeats `values`.
+fn float32Wav(rate: u32, frames: usize, values: []const f32) ![]u8 {
+    var data: std.ArrayList(u8) = .empty;
+    defer data.deinit(gpa);
+    for (0..frames) |_| for (values) |v| try appendInt(&data, u32, @bitCast(v));
+    return buildWav(.float, @intCast(values.len), rate, 32, data.items);
+}
+
+/// Write `bytes` to `name` in `tmp` and return its absolute path (caller frees).
+fn writeFixture(tmp: *std.testing.TmpDir, name: []const u8, bytes: []const u8) ![:0]u8 {
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = name, .data = bytes });
+    return tmp.dir.realPathFileAlloc(std.testing.io, name, gpa);
+}
+
+fn loadFixture(tmp: *std.testing.TmpDir, name: []const u8, bytes: []const u8) !*decoder.Track {
+    const path = try writeFixture(tmp, name, bytes);
+    defer gpa.free(path);
+    return decoder.load(gpa, path);
+}
+
+// --- isSupported ------------------------------------------------------------
 
 test "isSupported accepts the three formats, case-insensitively" {
     try std.testing.expect(decoder.isSupported("a.mp3"));
     try std.testing.expect(decoder.isSupported("a.FLAC"));
     try std.testing.expect(decoder.isSupported("dir/a.Wav"));
+    try std.testing.expect(decoder.isSupported("C:\\Music\\a.mp3"));
 }
 
 test "isSupported rejects other files" {
     try std.testing.expect(!decoder.isSupported("a.ogg"));
     try std.testing.expect(!decoder.isSupported("mp3"));
+    try std.testing.expect(!decoder.isSupported(""));
+    try std.testing.expect(!decoder.isSupported("a.mp3.txt"));
+}
+
+// --- resample ---------------------------------------------------------------
+
+test "resample doubles the frame count when going 22.05 kHz -> 44.1 kHz" {
+    const in = [_]f32{ 0.5, 0.5 } ** 100; // 100 frames
+    const out = try decoder.resample(gpa, &in, 22050);
+    defer gpa.free(out);
+    try expectEqual(@as(usize, 200 * 2), out.len);
+}
+
+test "resample keeps a constant signal constant" {
+    const in = [_]f32{ 0.25, -0.75 } ** 64;
+    const out = try decoder.resample(gpa, &in, 22050);
+    defer gpa.free(out);
+    for (0..out.len / 2) |i| {
+        try expectApproxEqAbs(@as(f32, 0.25), out[i * 2], 1e-6);
+        try expectApproxEqAbs(@as(f32, -0.75), out[i * 2 + 1], 1e-6);
+    }
+}
+
+test "resample interpolates linearly and holds the last frame" {
+    // Two frames (0 and 1) at half the output rate -> 0, 0.5, 1, 1.
+    const in = [_]f32{ 0, 0, 1, 1 };
+    const out = try decoder.resample(gpa, &in, 22050);
+    defer gpa.free(out);
+    try expectEqual(@as(usize, 8), out.len);
+    const expected = [_]f32{ 0, 0.5, 1, 1 };
+    for (expected, 0..) |e, i| {
+        try expectApproxEqAbs(e, out[i * 2], 1e-6);
+        try expectApproxEqAbs(e, out[i * 2 + 1], 1e-6);
+    }
+}
+
+test "resample 48 kHz -> 44.1 kHz gives about 44100 frames per second" {
+    const in = [_]f32{ 0, 0 } ** 48000;
+    const out = try decoder.resample(gpa, &in, 48000);
+    defer gpa.free(out);
+    const frames: i64 = @intCast(out.len / 2);
+    try std.testing.expect(@abs(frames - 44100) <= 1);
+}
+
+// --- load -------------------------------------------------------------------
+
+test "load keeps a 44.1 kHz stereo file as is" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(44100, 4410, &.{ 16384, -16384 }); // 0.5 / -0.5
+    defer gpa.free(wav);
+
+    const t = try loadFixture(&tmp, "stereo.wav", wav);
+    defer t.destroy(gpa);
+
+    try expectEqual(@as(usize, 4410), t.frameCount());
+    try expectApproxEqAbs(@as(f64, 0.1), t.durationSeconds(), 1e-9);
+    try expectApproxEqAbs(@as(f32, 0.5), t.samples[0], 1e-6);
+    try expectApproxEqAbs(@as(f32, -0.5), t.samples[1], 1e-6);
+    try expectApproxEqAbs(@as(f32, 0.5), t.samples[t.samples.len - 2], 1e-6);
+}
+
+test "load duplicates a mono file into both channels" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(44100, 1000, &.{8192}); // 0.25
+    defer gpa.free(wav);
+
+    const t = try loadFixture(&tmp, "mono.wav", wav);
+    defer t.destroy(gpa);
+
+    try expectEqual(@as(usize, 1000), t.frameCount());
+    try expectApproxEqAbs(@as(f32, 0.25), t.samples[0], 1e-6);
+    try expectApproxEqAbs(@as(f32, 0.25), t.samples[1], 1e-6);
+}
+
+test "load resamples a 22.05 kHz file to double length" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(22050, 2205, &.{ 8192, 8192 });
+    defer gpa.free(wav);
+
+    const t = try loadFixture(&tmp, "slow.wav", wav);
+    defer t.destroy(gpa);
+
+    try expectEqual(@as(usize, 4410), t.frameCount());
+    try expectApproxEqAbs(@as(f64, 0.1), t.durationSeconds(), 1e-9);
+}
+
+test "load clamps samples outside -1..1" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try float32Wav(44100, 10, &.{ 2.0, -3.0 });
+    defer gpa.free(wav);
+
+    const t = try loadFixture(&tmp, "loud.wav", wav);
+    defer t.destroy(gpa);
+
+    for (0..t.frameCount()) |i| {
+        try expectEqual(@as(f32, 1.0), t.samples[i * 2]);
+        try expectEqual(@as(f32, -1.0), t.samples[i * 2 + 1]);
+    }
+}
+
+test "load of a 3-channel file currently uses only the first two channels" {
+    // Documents today's behaviour (no real down-mix): the third channel is dropped.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(44100, 100, &.{ 16384, -16384, 8192 });
+    defer gpa.free(wav);
+
+    const t = try loadFixture(&tmp, "three.wav", wav);
+    defer t.destroy(gpa);
+
+    try expectEqual(@as(usize, 100), t.frameCount());
+    try expectApproxEqAbs(@as(f32, 0.5), t.samples[0], 1e-6);
+    try expectApproxEqAbs(@as(f32, -0.5), t.samples[1], 1e-6);
+}
+
+test "load handles non-ASCII file names" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(44100, 100, &.{ 100, 100 });
+    defer gpa.free(wav);
+
+    const t = try loadFixture(&tmp, "låt – ö.wav", wav);
+    defer t.destroy(gpa);
+
+    try expectEqual(@as(usize, 100), t.frameCount());
+}
+
+test "load reports an error for a WAV file without audio data" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(44100, 0, &.{ 0, 0 });
+    defer gpa.free(wav);
+
+    const path = try writeFixture(&tmp, "empty.wav", wav);
+    defer gpa.free(path);
+    // Either the decoder rejects it up front or the track turns out empty.
+    const result = decoder.load(gpa, path);
+    if (result) |t| {
+        t.destroy(gpa);
+        return error.TestUnexpectedResult;
+    } else |err| {
+        try std.testing.expect(err == error.EmptyAudio or err == error.OpenFailed);
+    }
+}
+
+test "load fails for a missing file" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(44100, 10, &.{ 0, 0 });
+    defer gpa.free(wav);
+    const path = try writeFixture(&tmp, "exists.wav", wav);
+    defer gpa.free(path);
+
+    const missing = try std.mem.concat(gpa, u8, &.{ path[0 .. path.len - "exists.wav".len], "missing.wav" });
+    defer gpa.free(missing);
+    try std.testing.expectError(error.OpenFailed, decoder.load(gpa, missing));
+}
+
+test "load fails for garbage with a .wav name" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeFixture(&tmp, "junk.wav", "this is not a wav file at all, just text");
+    defer gpa.free(path);
+    try std.testing.expectError(error.OpenFailed, decoder.load(gpa, path));
+}
+
+test "load fails for an unsupported extension even if the content is a valid WAV" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const wav = try pcm16Wav(44100, 10, &.{ 0, 0 });
+    defer gpa.free(wav);
+    const path = try writeFixture(&tmp, "audio.ogg", wav);
+    defer gpa.free(path);
+    try std.testing.expectError(error.OpenFailed, decoder.load(gpa, path));
 }
