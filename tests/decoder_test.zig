@@ -2,6 +2,7 @@
 //! tests themselves, so no binary files are stored in the repository.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const decoder = @import("decoder");
 
 const gpa = std.testing.allocator;
@@ -262,6 +263,83 @@ test "load reports an error for a WAV file without audio data" {
     } else |err| {
         try std.testing.expect(err == error.EmptyAudio or err == error.OpenFailed);
     }
+}
+
+// dr_wav clamps a WAV's declared length to the bytes actually present, so a cut
+// WAV looks complete; only FLAC (STREAMINFO total sample count) can be detected.
+
+fn crc8(bytes: []const u8) u8 {
+    var crc: u8 = 0;
+    for (bytes) |b| {
+        crc ^= b;
+        for (0..8) |_| crc = if (crc & 0x80 != 0) (crc << 1) ^ 0x07 else crc << 1;
+    }
+    return crc;
+}
+
+fn crc16(bytes: []const u8) u16 {
+    var crc: u16 = 0;
+    for (bytes) |b| {
+        crc ^= @as(u16, b) << 8;
+        for (0..8) |_| crc = if (crc & 0x8000 != 0) (crc << 1) ^ 0x8005 else crc << 1;
+    }
+    return crc;
+}
+
+/// Mono 16-bit 44.1 kHz FLAC with one verbatim frame of `frames` samples, whose
+/// STREAMINFO claims `declared_frames` samples in total.
+fn verbatimFlac(frames: u16, declared_frames: u64) ![]u8 {
+    var f: std.ArrayList(u8) = .empty;
+    errdefer f.deinit(gpa);
+    try f.appendSlice(gpa, "fLaC");
+    // STREAMINFO: last-block flag + type 0, length 34.
+    try f.appendSlice(gpa, &.{ 0x80, 0, 0, 34 });
+    try f.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToBig(u16, frames))); // min block size
+    try f.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToBig(u16, frames))); // max block size
+    try f.appendSlice(gpa, &.{ 0, 0, 0, 0, 0, 0 }); // min/max frame size: unknown
+    const packed_info: u64 = (@as(u64, 44100) << 44) | (@as(u64, 15) << 36) | declared_frames;
+    try f.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToBig(u64, packed_info)));
+    try f.appendSlice(gpa, &([_]u8{0} ** 16)); // MD5: unset
+
+    const frame_start = f.items.len;
+    // Frame header: fixed block size, 16-bit block size follows, rate from
+    // STREAMINFO, mono, 16 bits per sample, frame number 0.
+    try f.appendSlice(gpa, &.{ 0xFF, 0xF8, 0x70, 0x08, 0x00 });
+    try f.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToBig(u16, frames - 1)));
+    try f.append(gpa, crc8(f.items[frame_start..]));
+    try f.append(gpa, 0x02); // verbatim subframe
+    for (0..frames) |_| try f.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToBig(i16, 1000)));
+    try f.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToBig(u16, crc16(f.items[frame_start..]))));
+    return f.toOwnedSlice(gpa);
+}
+
+test "load reads a complete FLAC fixture" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const flac = try verbatimFlac(1000, 1000);
+    defer gpa.free(flac);
+
+    const t = try loadFixture(&tmp, "whole.flac", flac);
+    defer t.destroy(gpa);
+    try expectEqual(@as(usize, 1000), t.frameCount());
+}
+
+test "load reports Truncated for a FLAC that ends before its declared length" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // STREAMINFO promises 2000 samples but the file holds only 1000.
+    const flac = try verbatimFlac(1000, 2000);
+    defer gpa.free(flac);
+
+    const path = try writeFixture(&tmp, "cut.flac", flac);
+    defer gpa.free(path);
+    try std.testing.expectError(error.Truncated, decoder.load(gpa, path));
+}
+
+test "load reports InvalidPath for a path that is not valid UTF-8" {
+    // The UTF-8 -> UTF-16 conversion that rejects it only exists on Windows.
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    try std.testing.expectError(error.InvalidPath, decoder.load(gpa, "C:\\music\\\xff\xfe.wav"));
 }
 
 test "load fails for a missing file" {

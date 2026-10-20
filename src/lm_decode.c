@@ -23,6 +23,9 @@
 
 typedef enum { LM_MP3 = 1, LM_FLAC = 2, LM_WAV = 3 } lm_kind;
 
+// Failure reasons reported by lm_open (mirrored in decoder.zig).
+enum { LM_ERR_OPEN = 1, LM_ERR_OOM = 2, LM_ERR_PATH = 3 };
+
 typedef struct lm_decoder {
     lm_kind kind;
     union {
@@ -42,20 +45,24 @@ static int lm_has_ext(const char* path, const char* ext) {
     return 1;
 }
 
-// Opens `path` (UTF-8) by file extension. Returns NULL on failure. On success
-// fills in the native channel count and sample rate.
-lm_decoder* lm_open(const char* path, uint32_t* channels, uint32_t* sample_rate) {
+// Opens `path` (UTF-8) by file extension. Returns NULL on failure and stores the
+// reason in `*err` (LM_ERR_*). On success fills in the native channel count and
+// sample rate.
+lm_decoder* lm_open(const char* path, uint32_t* channels, uint32_t* sample_rate, int* err) {
+    *err = LM_ERR_OPEN;
     lm_decoder* d = (lm_decoder*)calloc(1, sizeof(*d));
-    if (!d) return NULL;
+    if (!d) { *err = LM_ERR_OOM; return NULL; }
 
 #ifdef _WIN32
     // fopen() on Windows takes the ANSI code page; convert UTF-8 -> UTF-16 and use
     // dr_libs' *_w entry points so non-ASCII file names work.
-    int wn = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
-    if (wn <= 0) { free(d); return NULL; }
+    int wn = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, NULL, 0);
+    if (wn <= 0) { free(d); *err = LM_ERR_PATH; return NULL; }
     wchar_t* wpath = (wchar_t*)malloc((size_t)wn * sizeof(wchar_t));
-    if (!wpath) { free(d); return NULL; }
-    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, wn);
+    if (!wpath) { free(d); *err = LM_ERR_OOM; return NULL; }
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, wpath, wn) <= 0) {
+        free(wpath); free(d); *err = LM_ERR_PATH; return NULL;
+    }
 #endif
 
     int ok = 0;
@@ -91,6 +98,18 @@ lm_decoder* lm_open(const char* path, uint32_t* channels, uint32_t* sample_rate)
 #endif
     if (!ok) { free(d); return NULL; }
     return d;
+}
+
+// Total length in frames as declared by the file header, or 0 when the format
+// does not say (MP3). Lets the caller tell a truncated/corrupt file from EOF,
+// because the read functions return 0 for both.
+uint64_t lm_total_frames(lm_decoder* d) {
+    switch (d->kind) {
+        case LM_MP3:  return 0;
+        case LM_FLAC: return d->u.flac->totalPCMFrameCount;
+        case LM_WAV:  return d->u.wav.totalPCMFrameCount;
+    }
+    return 0;
 }
 
 // Reads up to `frames` interleaved float frames. Returns frames read (0 = EOF).
