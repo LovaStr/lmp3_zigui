@@ -26,6 +26,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "tests",
         "third_party",
         "README.md",
     },
