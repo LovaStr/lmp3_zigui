@@ -64,6 +64,12 @@ pub const Audio = struct {
         if (self.player) |p| try p.play();
     }
 
+    /// True while a zoto player exists (playing or paused). Without one the
+    /// device is silent for reasons other than the track having ended.
+    pub fn hasPlayer(self: *const Audio) bool {
+        return self.player != null;
+    }
+
     pub fn isPlaying(self: *Audio) bool {
         return if (self.player) |p| p.isPlaying() else false;
     }
