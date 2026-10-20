@@ -156,7 +156,9 @@ test "load rejects a WAV with a sample rate above the supported range" {
     defer gpa.free(wav);
     const path = try writeFixture(&tmp, "fast_rate.wav", wav);
     defer gpa.free(path);
-    try std.testing.expectError(error.UnsupportedSampleRate, decoder.load(gpa, path));
+    // dr_wav has the same 384 kHz limit and already refuses to open the file;
+    // our own check (UnsupportedSampleRate) covers MP3/FLAC and `resample`.
+    try std.testing.expectError(error.OpenFailed, decoder.load(gpa, path));
 }
 
 test "load keeps a 44.1 kHz stereo file as is" {
