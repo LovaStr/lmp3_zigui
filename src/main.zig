@@ -77,45 +77,62 @@ fn lessThan(_: void, a: Entry, b: Entry) bool {
     return util.pathLessThan(a.path, b.path);
 }
 
+const AddError = error{
+    OutOfMemory,
+    /// The path does not exist or cannot be accessed.
+    NotFound,
+    /// The folder exists but its contents could not be listed.
+    FolderUnreadable,
+};
+
 /// Append one audio file to the play list (unsupported extensions are ignored).
-fn addFile(st: *AppState, path: []const u8) void {
+fn addFile(st: *AppState, path: []const u8) error{OutOfMemory}!void {
     if (!decoder.isSupported(path)) return;
-    const owned = st.gpa.dupe(u8, path) catch return;
-    const title = st.gpa.dupe(u8, util.titleOf(path)) catch {
-        st.gpa.free(owned);
-        return;
-    };
-    st.entries.append(st.gpa, .{ .path = owned, .title = title }) catch {
-        st.gpa.free(owned);
-        st.gpa.free(title);
-    };
+    const owned = try st.gpa.dupe(u8, path);
+    errdefer st.gpa.free(owned);
+    const title = try st.gpa.dupe(u8, util.titleOf(path));
+    errdefer st.gpa.free(title);
+    try st.entries.append(st.gpa, .{ .path = owned, .title = title });
 }
 
 /// Add a file, or every supported file found under a folder (sorted by path).
-fn addPath(st: *AppState, path: []const u8) void {
-    const cpath = st.gpa.dupeZ(u8, path) catch return;
+/// Files added before an error occurs stay in the play list.
+fn addPath(st: *AppState, path: []const u8) AddError!void {
+    const cpath = try st.gpa.dupeZ(u8, path);
     defer st.gpa.free(cpath);
 
     var info: sdl.SDL_PathInfo = undefined;
-    if (!sdl.SDL_GetPathInfo(cpath.ptr, &info) or info.type != sdl.SDL_PATHTYPE_DIRECTORY) {
-        addFile(st, path);
-        return;
-    }
+    if (!sdl.SDL_GetPathInfo(cpath.ptr, &info)) return error.NotFound;
+    if (info.type != sdl.SDL_PATHTYPE_DIRECTORY) return addFile(st, path);
 
     var count: c_int = 0;
-    const list = sdl.SDL_GlobDirectory(cpath.ptr, null, 0, &count);
-    if (list == null) return;
+    const list = sdl.SDL_GlobDirectory(cpath.ptr, null, 0, &count) orelse return error.FolderUnreadable;
     defer sdl.SDL_free(@ptrCast(list));
 
     const first_new = st.entries.items.len;
+    defer std.mem.sort(Entry, st.entries.items[first_new..], {}, lessThan);
     var i: usize = 0;
     while (i < @as(usize, @intCast(count))) : (i += 1) {
         const rel = std.mem.span(list[i]);
-        const full = std.fmt.allocPrint(st.gpa, "{s}/{s}", .{ path, rel }) catch continue;
+        const full = try std.fmt.allocPrint(st.gpa, "{s}/{s}", .{ path, rel });
         defer st.gpa.free(full);
-        addFile(st, full);
+        try addFile(st, full);
     }
-    std.mem.sort(Entry, st.entries.items[first_new..], {}, lessThan);
+}
+
+/// Add `path` and report the outcome in the status bar.
+fn addPathReportingStatus(st: *AppState, path: []const u8) void {
+    const before = st.entries.items.len;
+    addPath(st, path) catch |err| {
+        st.setStatus("Could not add \"{s}\": {s}", .{ util.baseName(path), @errorName(err) });
+        return;
+    };
+    const added = st.entries.items.len - before;
+    if (added == 0) {
+        st.setStatus("No supported audio files found in \"{s}\"", .{util.baseName(path)});
+    } else {
+        st.setStatus("Added {d} track(s)", .{added});
+    }
 }
 
 fn freeEntries(st: *AppState) void {
@@ -233,9 +250,7 @@ fn frameHook() void {
         .none, .canceled => {},
         .picked => |path| {
             defer st.gpa.free(path);
-            const before = st.entries.items.len;
-            addPath(st, path);
-            st.setStatus("Added {d} track(s)", .{st.entries.items.len - before});
+            addPathReportingStatus(st, path);
         },
     }
 
@@ -383,6 +398,15 @@ fn playlistHeader(st: *AppState) zigui.View {
     }).spacing(8).paddingInsets(.{ .top = 8, .leading = 16, .bottom = 8, .trailing = 16 });
 }
 
+/// Shown instead of the play list when the per-frame build arena is exhausted.
+fn outOfMemoryView() zigui.View {
+    return zigui.VStack(.{
+        zigui.Spacer(),
+        zigui.Text("Out of memory: cannot draw the play list").font(.headline).foreground(colors().secondary_label),
+        zigui.Spacer(),
+    }).frameMaxWidth().frameMaxHeight();
+}
+
 fn playlist(st: *AppState) zigui.View {
     const c = colors();
     if (st.entries.items.len == 0) {
@@ -396,9 +420,9 @@ fn playlist(st: *AppState) zigui.View {
     }
 
     const arena = zigui.view.buildAlloc();
-    const rows = arena.alloc(zigui.View, st.entries.items.len * 2) catch @panic("oom");
+    const rows = arena.alloc(zigui.View, st.entries.items.len * 2) catch return outOfMemoryView();
     for (st.entries.items, 0..) |e, i| {
-        const ctx = arena.create(RowCtx) catch @panic("oom");
+        const ctx = arena.create(RowCtx) catch return outOfMemoryView();
         ctx.* = .{ .st = st, .index = i };
         const is_current = st.current != null and st.current.? == i;
 
@@ -474,8 +498,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var args = try std.process.Args.iterateAllocator(init.args, gpa);
     defer args.deinit();
     _ = args.next(); // argv[0]
-    while (args.next()) |a| addPath(&st, a);
-    if (st.entries.items.len > 0) st.setStatus("Loaded {d} track(s)", .{st.entries.items.len});
+    var arg_failed = false;
+    while (args.next()) |arg| {
+        addPath(&st, arg) catch |err| {
+            arg_failed = true;
+            st.setStatus("Could not add \"{s}\": {s}", .{ util.baseName(arg), @errorName(err) });
+        };
+    }
+    // Keep the error message if any argument failed; otherwise summarize.
+    if (!arg_failed and st.entries.items.len > 0) st.setStatus("Loaded {d} track(s)", .{st.entries.items.len});
 
     app.setThemeProvider(themeProvider);
     app.setFrameHook(frameHook);

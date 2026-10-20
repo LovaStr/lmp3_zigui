@@ -10,7 +10,8 @@ pub const channels: u8 = 2;
 pub const bytes_per_frame: usize = channels * @sizeOf(f32);
 
 const Handle = opaque {};
-extern "c" fn lm_open(path: [*:0]const u8, channels: *u32, sample_rate: *u32) ?*Handle;
+extern "c" fn lm_open(path: [*:0]const u8, channels: *u32, sample_rate: *u32, err: *c_int) ?*Handle;
+extern "c" fn lm_total_frames(h: *Handle) u64;
 extern "c" fn lm_read_f32(h: *Handle, frames: u64, out: [*]f32) u64;
 extern "c" fn lm_close(h: *Handle) void;
 
@@ -28,8 +29,16 @@ pub const Error = error{
     UnsupportedSampleRate,
     TooLong,
     EmptyAudio,
+    /// Decoding stopped before the length declared in the file header.
+    Truncated,
+    /// The path is not valid UTF-8.
+    InvalidPath,
     OutOfMemory,
 };
+
+/// Values of `lm_open`'s `err` out-parameter (see lm_decode.c).
+const lm_err_oom = 2;
+const lm_err_path = 3;
 
 /// A fully decoded track. Heap-allocated (see `load`) so `reader` has a stable
 /// address: zoto's player keeps a pointer to it.
@@ -73,8 +82,14 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8) Error!*Track {
 
     var src_channels: u32 = 0;
     var src_rate: u32 = 0;
-    const h = lm_open(cpath.ptr, &src_channels, &src_rate) orelse return error.OpenFailed;
+    var open_err: c_int = 0;
+    const h = lm_open(cpath.ptr, &src_channels, &src_rate, &open_err) orelse return switch (open_err) {
+        lm_err_oom => error.OutOfMemory,
+        lm_err_path => error.InvalidPath,
+        else => error.OpenFailed,
+    };
     defer lm_close(h);
+    const declared_frames = lm_total_frames(h);
     if (src_channels == 0 or src_channels > 8) return error.UnsupportedChannelCount;
     if (!validSourceRate(src_rate)) return error.UnsupportedSampleRate;
     const max_src_frames: usize = @intCast(max_track_seconds * src_rate);
@@ -100,6 +115,9 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8) Error!*Track {
         }
     }
     if (stereo.items.len == 0) return error.EmptyAudio;
+    // lm_read_f32 returns 0 for both EOF and a read error; a file that ends
+    // before the length its header declares was cut off or is corrupt.
+    if (declared_frames != 0 and stereo.items.len / 2 < declared_frames) return error.Truncated;
 
     // 2) Resample (linear interpolation) to the context rate if needed.
     const samples: []f32 = if (src_rate == sample_rate)
