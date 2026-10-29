@@ -1,70 +1,116 @@
 # lmp3_zigui
 
-A small audio player for Windows, written in Zig. One window: a "now playing" panel
-with a seek slider, play/pause and play-list toggles, a volume slider, and the play list.
-Supported formats: MP3, FLAC and WAV.
+A small, dependency-light audio player for Windows, written end to end in Zig, with a native-looking UI and no runtime to install.
 
-| Job | Library |
+Download: [latest release](../../releases/latest) (`lmp3-windows-x64.zip`: `lmp3.exe` + `SDL3.dll`). Unzip and run `lmp3.exe`.
+
+## What it does
+
+Plays MP3, FLAC and WAV files in a single window. The window shows the current track (title, track N of M, elapsed/total time) with a draggable seek slider, play/pause, a continuous-playback toggle, a remove-played-tracks toggle, a volume slider and the play list. Add files or folders from the window or on the command line (`lmp3 [file-or-folder ...]`), click a track to play it, and shuffle or clear the list.
+
+It is also a working example of combining [zigui](https://github.com/ddalcu/zigui) (UI), [dr_libs](https://github.com/mackron/dr_libs) (decoding) and [zoto](https://github.com/braheezy/zoto) (audio output) in one program.
+
+## Getting started
+
+### Requirements
+
+* Windows (playback uses WASAPI; no other platform is supported)
+* To run: nothing beyond the release zip
+* To build from source:
+  * **Zig 0.16.0** (do not use 0.17: zigui uses `@cImport`, which 0.17 removed)
+  * The SDL3 development package for MinGW (`SDL3-devel-<ver>-mingw.tar.gz` from the [SDL releases page](https://github.com/libsdl-org/SDL/releases)), extracted somewhere
+
+No accounts, API keys or external services are needed.
+
+### Installation
+
+```sh
+git clone https://github.com/LovaStr/lmp3_zigui
+cd lmp3_zigui
+```
+
+Dependencies (zigui, dr_libs) are pinned with hashes in `build.zig.zon`, so the first `zig build` fetches them.
+
+### Configuration
+
+There is no `.env` file. Configuration is done with build options:
+
+| Option | Meaning |
 |---|---|
-| UI | [ddalcu/zigui](https://github.com/ddalcu/zigui) (SDL3 window layer) |
-| Decoding (MP3 / FLAC / WAV) | [mackron/dr_libs](https://github.com/mackron/dr_libs) (compiled via `src/lm_decode.c`) |
-| Playback | [braheezy/zoto](https://github.com/braheezy/zoto), vendored and patched in `third_party/zoto` (WASAPI, Windows only) |
+| `-Dsdl3-prefix=<path>` | The `x86_64-w64-mingw32` folder of the extracted SDL3 package |
+| `-Dsdl3-dll=<path>` | Path to `SDL3.dll` (copied next to the exe) |
+| `-Doptimize=ReleaseFast` | Recommended for the UI |
+| `-Dconsole=true` | Keep a console window for logs and errors (off by default) |
+| `-Dtarget=x86_64-windows-gnu` | Cross-compile from another OS (what CI does) |
 
-## Download
-
-Every merge to `main` publishes a release on the GitHub Releases page with
-`lmp3-windows-x64.zip` (`lmp3.exe` + `SDL3.dll`). Unzip it and run `lmp3.exe`.
-
-## Build
-
-Needs **Zig 0.16.0** (do not use 0.17: zigui uses `@cImport`, which 0.17 removed)
-and the SDL3 development files for MinGW.
-
-1. Download `SDL3-devel-<ver>-mingw.tar.gz` from the
-   [SDL releases page](https://github.com/libsdl-org/SDL/releases) and extract it.
-2. Build, passing the `x86_64-w64-mingw32` folder and the DLL:
+### Run
 
 ```sh
 zig build -Doptimize=ReleaseFast -Dsdl3-prefix=C:\sdk\SDL3\x86_64-w64-mingw32 -Dsdl3-dll=C:\sdk\SDL3\x86_64-w64-mingw32\bin\SDL3.dll
 ```
 
-The exe and `SDL3.dll` end up in `zig-out\bin`. It can be cross-compiled from other
-systems with `-Dtarget=x86_64-windows-gnu`, which is what CI does.
+The exe and `SDL3.dll` end up in `zig-out\bin`. To build and start the player in one step:
 
-Options:
+```sh
+zig build run -- "C:\Users\you\Music"
+```
 
-* `-Dconsole=true` keeps a console window (for logs and errors). Off by default.
-* `zig build run -- "C:\Users\you\Music"` builds and starts the player.
-* `zig build test` runs the unit tests; they need neither SDL3 nor a window.
+`zig build test` runs the unit tests; they need neither SDL3 nor a window.
 
-The dependencies are recorded with hashes in `build.zig.zon` (added with
-`zig fetch --save`), so a plain `zig build` fetches them.
-
-## Use
-
-`lmp3 [file-or-folder ...]`, or use **Add files…** / **Add folder…** in the window.
-A folder adds the supported audio files in it.
+## Using the player
 
 * Click a track in the play list to play it.
 * **Play/pause** button: pause and resume.
-* **Arrow** button: full strength = continue with the next track when one ends;
-  dimmed = stop after the current track (the next track is cued, press play to start it).
-* **Trash** button: full strength = played tracks are removed from the list;
-  dimmed = they stay.
+* **Arrow** button: full strength = continue with the next track when one ends; dimmed = stop after the current track (the next track is cued, press play to start it).
+* **Trash** button: full strength = played tracks are removed from the list; dimmed = they stay.
 * The progress bar is a slider: click or drag it to jump to another time in the song.
-* **Random** shuffles the play list, stops any current playback and cues the first track
-  of the new order; press play to start it.
-* **Volume** slider on the right. **Clear** empties the play list.
-* Errors (unreadable files, a missing audio device, a failed seek) show in the status
-  bar instead of crashing the player.
+* **Random** shuffles the play list, stops any current playback and cues the first track of the new order; press play to start it.
+* **Add files…** / **Add folder…** add audio files (a folder adds the supported files in it). **Clear** empties the play list.
+* **Volume** slider on the right.
+* Errors (unreadable files, a missing audio device, a failed seek) show in the status bar instead of crashing the player.
 
 Defaults at start: volume 100 %, continuous playback off, remove played tracks on.
 
-## Notes
+## Architecture
 
-* Each track is decoded fully into memory as stereo float32 @ 44.1 kHz (other rates
-  are linearly resampled; more than 2 channels use the first two) and handed to zoto
-  through a `std.Io.Reader`. The decoders are always built `-O2`; use
-  `-Doptimize=ReleaseFast` for the UI.
-* Only Windows is supported: zoto is vendored with just its WASAPI driver. The changes
-  to zoto are listed in `third_party/zoto/PATCHES.md`.
+Three layers with one direction of dependency: `decoder.zig` turns a file into PCM, `audio.zig` feeds that PCM to the zoto player, and `main.zig` holds the application state and the zigui views. The UI only calls `Audio` methods and reads `Audio` state; it never touches decoder or zoto internals. Every track is decoded fully into memory, folded to stereo and linearly resampled to the single output format (stereo float32 @ 44.1 kHz). Logic that does not need SDL, zigui or an audio device lives in small pure modules so it can be unit-tested. All dr_libs details stay behind a tiny C shim (`lm_decode.c`).
+
+```
+lmp3_zigui/
+├── src/
+│   ├── main.zig         # app state, zigui views, file dialogs, frame hook
+│   ├── audio.zig        # PCM -> zoto player: play, pause, seek, volume
+│   ├── decoder.zig      # file -> PCM, through the C shim
+│   ├── lm_decode.c      # dr_libs wrapper: lm_open / lm_read_f32 / lm_close
+│   ├── transport.zig    # pure track-end decision logic
+│   └── util.zig         # pure helpers (file names, path order, time split)
+├── tests/               # unit tests for decoder, transport and util
+├── third_party/zoto/    # vendored, patched zoto (changes in PATCHES.md)
+├── .github/workflows/   # CI: build, test, and publish releases from main
+├── build.zig            # build script and options
+└── build.zig.zon        # dependencies pinned with hashes
+```
+
+## Tech stack
+
+| Component | Choice | Reason |
+|---|---|---|
+| Language | Zig 0.16.0 | One toolchain for the app, the C shim and cross-compilation |
+| UI | [ddalcu/zigui](https://github.com/ddalcu/zigui) on SDL3 | Declarative views and a native-looking window without a runtime |
+| Decoding | [mackron/dr_libs](https://github.com/mackron/dr_libs) (`dr_mp3`, `dr_flac`, `dr_wav`) | Small single-header decoders for all three formats |
+| Playback | [braheezy/zoto](https://github.com/braheezy/zoto), vendored and patched | Minimal audio output; vendored so it can be trimmed to the WASAPI driver |
+| Build / release | `zig build` + GitHub Actions | CI cross-compiles on Linux and publishes `lmp3-windows-x64.zip` on every merge to `main` |
+
+## Limitations
+
+* **Windows only.** zoto is vendored with just its WASAPI driver.
+* **Whole tracks are decoded into memory** before playing, synchronously on the UI thread. Large files cause a short pause on load and use memory proportional to their length.
+* **One fixed output format** (stereo float32 @ 44.1 kHz). Other sample rates are linearly resampled (not high-quality resampling) and sources with more than two channels use only the first two.
+* **Only MP3, FLAC and WAV.** Other files are ignored when added.
+* **No previous/next buttons, tags or cover art.** The title is derived from the file name.
+* **Playback is tested by hand.** The unit tests cover decoding, track-end logic and helpers; actual audio output through WASAPI is not covered by automated tests.
+* A missing audio device leaves the UI usable but silent.
+
+## Built with
+
+Claude Code (agent-driven development) as part of the course *Next-Generation Software Development with AI*.
