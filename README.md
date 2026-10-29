@@ -68,5 +68,3 @@ Defaults at start: volume 100 %, continuous playback off, remove played tracks o
   `-Doptimize=ReleaseFast` for the UI.
 * Only Windows is supported: zoto is vendored with just its WASAPI driver. The changes
   to zoto are listed in `third_party/zoto/PATCHES.md`.
-* `dist/` may hold prebuilt binaries, but they are not rebuilt automatically and can lag
-  behind the source. Use the releases for current builds.
