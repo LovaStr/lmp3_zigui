@@ -181,16 +181,18 @@ fn playIndex(st: *AppState, index: usize) void {
     st.setStatus("Playing", .{});
 }
 
-/// Stop after a track ended on its own. If played tracks are removed, drop the
-/// finished one and cue the track that followed it, so the next press of play
-/// starts that one (wrapping to the first track past the end of the list).
+/// Stop after a track ended on its own and cue the track that follows it, so the
+/// next press of play starts that one (wrapping to the first track past the end
+/// of the list). If played tracks are removed, the finished one is dropped too.
 fn stopAndCueNext(st: *AppState, finished: ?usize) void {
     stopAudio(st);
     st.cue = 0;
-    if (!st.remove_played) return;
-    if (finished) |f| {
+    const f = finished orelse return;
+    if (st.remove_played) {
         removeEntry(st, f);
         st.cue = f;
+    } else {
+        st.cue = f + 1;
     }
 }
 
