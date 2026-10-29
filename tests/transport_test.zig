@@ -4,35 +4,6 @@ const transport = @import("transport");
 const expectEqual = std.testing.expectEqual;
 const Action = transport.Action;
 
-// --- next / previous --------------------------------------------------------
-
-test "nextIndex goes to the following track" {
-    try expectEqual(@as(?usize, 1), transport.nextIndex(0, 3));
-    try expectEqual(@as(?usize, 2), transport.nextIndex(1, 3));
-}
-
-test "nextIndex wraps around at the end of the list" {
-    // The next *button* wraps; automatic advance stops instead (see trackEnd).
-    try expectEqual(@as(?usize, 0), transport.nextIndex(2, 3));
-    try expectEqual(@as(?usize, 0), transport.nextIndex(0, 1));
-}
-
-test "nextIndex and prevIndex start at the first track when nothing is loaded" {
-    try expectEqual(@as(?usize, 0), transport.nextIndex(null, 5));
-    try expectEqual(@as(?usize, 0), transport.prevIndex(null, 5));
-}
-
-test "prevIndex goes back and wraps to the last track" {
-    try expectEqual(@as(?usize, 1), transport.prevIndex(2, 3));
-    try expectEqual(@as(?usize, 2), transport.prevIndex(0, 3));
-    try expectEqual(@as(?usize, 0), transport.prevIndex(0, 1));
-}
-
-test "next and prev do nothing for an empty list" {
-    try expectEqual(@as(?usize, null), transport.nextIndex(null, 0));
-    try expectEqual(@as(?usize, null), transport.prevIndex(null, 0));
-}
-
 // --- trackEnd ---------------------------------------------------------------
 
 /// A playing track at index 1 of 3 whose device has just stopped.

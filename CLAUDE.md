@@ -3,9 +3,11 @@
 ## What this project is
 
 A desktop audio player (executable: `lmp3`), written in Zig. It is a single-window player for Windows. One page shows what is currently playing
-(title, track N of M, elapsed/total time, a draggable seek slider), transport controls
-(previous / play-pause / next), a volume slider, and the play list. Clicking a track
-plays it, the next track starts automatically, and files or folders can be added from the
+(title, track N of M, elapsed/total time, a draggable seek slider), controls
+(play-pause, a continuous-playback toggle, a remove-played-tracks toggle), a volume slider,
+and the play list (with Random and Clear). There are no previous/next buttons. Clicking a
+track plays it, the next track starts automatically when continuous playback is on, and
+files or folders can be added from the
 window or on the command line (`lmp3 [file-or-folder ...]`). Supported formats: MP3, FLAC, WAV.
 
 ## The problem it solves
