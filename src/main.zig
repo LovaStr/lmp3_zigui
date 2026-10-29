@@ -89,6 +89,15 @@ const AddError = error{
     FolderUnreadable,
 };
 
+/// A user-facing sentence for `err` (decoder errors are described by the decoder).
+fn describeError(err: anyerror) []const u8 {
+    return switch (err) {
+        error.NotFound => "Path does not exist or cannot be accessed",
+        error.FolderUnreadable => "Folder contents could not be listed",
+        else => decoder.describeError(err),
+    };
+}
+
 /// Append one audio file to the play list (unsupported extensions are ignored).
 fn addFile(st: *AppState, path: []const u8) error{OutOfMemory}!void {
     if (!decoder.isSupported(path)) return;
@@ -128,7 +137,7 @@ fn addPath(st: *AppState, path: []const u8) AddError!void {
 fn addPathReportingStatus(st: *AppState, path: []const u8) void {
     const before = st.entries.items.len;
     addPath(st, path) catch |err| {
-        st.setStatus("Could not add \"{s}\": {s}", .{ util.baseName(path), @errorName(err) });
+        st.setStatus("Could not add \"{s}\": {s}", .{ util.baseName(path), describeError(err) });
         return;
     };
     const added = st.entries.items.len - before;
@@ -173,7 +182,7 @@ fn playIndex(st: *AppState, index: usize) void {
         a.unload();
         st.current = null;
         st.paused = false;
-        st.setStatus("Could not play \"{s}\": {s}", .{ e.title, @errorName(err) });
+        st.setStatus("Could not play \"{s}\": {s}", .{ e.title, describeError(err) });
         return;
     };
     st.current = index;
@@ -205,7 +214,7 @@ fn togglePlayPause(st: *AppState) void {
     const a = if (st.audio) |*au| au else return;
     if (st.paused) {
         a.resumePlayback() catch |err| {
-            st.setStatus("Resume failed: {s}", .{@errorName(err)});
+            st.setStatus("Resume failed: {s}", .{describeError(err)});
             return;
         };
         st.paused = false;
@@ -358,7 +367,7 @@ fn seekSet(ctx: *anyopaque, v: f32) void {
         // The old player is already gone; stop instead of letting the track-end
         // detection mistake the missing player for a finished track.
         stopAudio(st);
-        st.setStatus("Seek failed: {s}", .{@errorName(err)});
+        st.setStatus("Seek failed: {s}", .{describeError(err)});
     };
 }
 
@@ -538,7 +547,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     g_app = &st;
 
     st.audio = Audio.init(gpa) catch |err| blk: {
-        st.setStatus("Audio output unavailable: {s}", .{@errorName(err)});
+        st.setStatus("Audio output unavailable: {s}", .{describeError(err)});
         break :blk null;
     };
     defer if (st.audio) |*au| au.deinit();
@@ -552,7 +561,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     while (args.next()) |arg| {
         addPath(&st, arg) catch |err| {
             arg_failed = true;
-            st.setStatus("Could not add \"{s}\": {s}", .{ util.baseName(arg), @errorName(err) });
+            st.setStatus("Could not add \"{s}\": {s}", .{ util.baseName(arg), describeError(err) });
         };
     }
     // Keep the error message if any argument failed; otherwise summarize.

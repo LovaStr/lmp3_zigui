@@ -20,6 +20,9 @@ extern "c" fn lm_close(h: *Handle) void;
 pub const min_source_rate: u32 = 8_000;
 pub const max_source_rate: u32 = 384_000;
 
+/// Most channels a source file may have (they are folded down to stereo).
+pub const max_source_channels: u32 = 8;
+
 /// Longest track that is decoded into memory (about 2.5 GB of float32 stereo).
 pub const max_track_seconds: u64 = 2 * 60 * 60;
 
@@ -35,6 +38,22 @@ pub const Error = error{
     InvalidPath,
     OutOfMemory,
 };
+
+/// A sentence for the status bar describing `err`. Errors this module does not
+/// know (e.g. from the audio device) fall back to their name.
+pub fn describeError(err: anyerror) []const u8 {
+    return switch (err) {
+        error.OpenFailed => "Could not open file (missing, locked or damaged)",
+        error.UnsupportedChannelCount => std.fmt.comptimePrint("More than {d} channels are not supported", .{max_source_channels}),
+        error.UnsupportedSampleRate => std.fmt.comptimePrint("Sample rate is not supported (only {d}-{d} Hz)", .{ min_source_rate, max_source_rate }),
+        error.TooLong => std.fmt.comptimePrint("Track is longer than {d} hours", .{max_track_seconds / 3600}),
+        error.EmptyAudio => "File contains no audio",
+        error.Truncated => "File is incomplete or damaged",
+        error.InvalidPath => "File path is not valid text",
+        error.OutOfMemory => "Out of memory",
+        else => @errorName(err),
+    };
+}
 
 /// Values of `lm_open`'s `err` out-parameter (see lm_decode.c).
 const lm_err_oom = 2;
@@ -90,7 +109,7 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8) Error!*Track {
     };
     defer lm_close(h);
     const declared_frames = lm_total_frames(h);
-    if (src_channels == 0 or src_channels > 8) return error.UnsupportedChannelCount;
+    if (src_channels == 0 or src_channels > max_source_channels) return error.UnsupportedChannelCount;
     if (!validSourceRate(src_rate)) return error.UnsupportedSampleRate;
     const max_src_frames: usize = @intCast(max_track_seconds * src_rate);
 
