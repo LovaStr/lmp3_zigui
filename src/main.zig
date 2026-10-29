@@ -247,6 +247,16 @@ const audio_filters = [_]app.FileFilter{
     .{ .name = "All files", .pattern = "*" },
 };
 
+/// Shuffle the play list and cue (select, not start) the first track of the new order.
+fn onRandom(st: *AppState) void {
+    if (st.entries.items.len == 0) return;
+    stopAudio(st);
+    var prng = std.Random.DefaultPrng.init(sdl.SDL_GetPerformanceCounter());
+    prng.random().shuffle(Entry, st.entries.items);
+    st.cue = 0;
+    st.setStatus("Play list shuffled", .{});
+}
+
 fn onAddFile(_: *AppState) void {
     _ = app.openFileDialog(&audio_filters, null);
 }
@@ -415,7 +425,8 @@ fn playlistHeader(st: *AppState) zigui.View {
     return zigui.HStack(.{
         zigui.Text(zigui.components.fmt("Play list · {d}", .{st.entries.items.len})).font(.headline),
         zigui.Spacer(),
-        zigui.Button("Add files…", zigui.actionCtx(AppState, st, onAddFile)),
+        zigui.Button("Random", zigui.actionCtx(AppState, st, onRandom)),
+        zigui.Button("Add files…",zigui.actionCtx(AppState, st, onAddFile)),
         zigui.Button("Add folder…", zigui.actionCtx(AppState, st, onAddFolder)),
         zigui.Button("Clear", zigui.actionCtx(AppState, st, onClear)),
     }).spacing(8).paddingInsets(.{ .top = 8, .leading = 16, .bottom = 8, .trailing = 16 });
