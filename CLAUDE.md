@@ -21,7 +21,7 @@ zigui (UI), dr_libs (decoding) and zoto (audio output) in one program.
 - **Decoding:** [mackron/dr_libs](https://github.com/mackron/dr_libs) (`dr_mp3`, `dr_flac`, `dr_wav`), compiled once in `src/lm_decode.c`, a small C shim exposing `lm_open` / `lm_read_f32` / `lm_close`.
 - **Playback:** [braheezy/zoto](https://github.com/braheezy/zoto), **vendored and patched** in `third_party/zoto` (see `PATCHES.md`); Windows (WASAPI) only.
 - **Windowing:** SDL3 (MinGW dev package; `SDL3.dll` ships next to the exe).
-- **Build:** `zig build -Doptimize=ReleaseFast -Dsdl3-prefix=<...\x86_64-w64-mingw32> -Dsdl3-dll=<...\bin\SDL3.dll>`; `-Dconsole=true` keeps a console window. `zigui` and `dr_libs` come from `zig fetch --save` (see `README.md`). Prebuilt binaries are in `dist/`.
+- **Build:** `zig build -Doptimize=ReleaseFast -Dsdl3-prefix=<...\x86_64-w64-mingw32> -Dsdl3-dll=<...\bin\SDL3.dll>`; `-Dconsole=true` keeps a console window. `zigui` and `dr_libs` come from `zig fetch --save` (see `README.md`). Prebuilt binaries are not in the repo: `.github/workflows/release.yml` builds and tests on pull requests, and on every push to `main` publishes a GitHub Release with `lmp3-windows-x64.zip` (`lmp3.exe` + `SDL3.dll`, cross-compiled with `-Dtarget=x86_64-windows-gnu` on Linux).
 
 ## Architecture principles
 
@@ -43,5 +43,5 @@ zigui (UI), dr_libs (decoding) and zoto (audio output) in one program.
 - Do **not** mutate a playing zoto `Player`'s reader, or free a track/reader before its player is deinitialized.
 - Do **not** block the UI thread with long work or add threads without need; decoding is currently synchronous by design.
 - Do **not** add new dependencies, `@cImport` in project code, or platform-specific code paths outside the existing `builtin.os.tag == .windows` guards without being asked.
-- Do **not** commit, push, or delete files unless asked. Leave `dist/` binaries to be rebuilt from source, and tell the user when they are stale.
+- Do **not** commit, push, or delete files unless asked. Do not commit binaries (`dist/` is gitignored); releases are built by CI. Keep the Zig version in `release.yml` in step with `minimum_zig_version`.
 - Do **not** leave the console window enabled in release builds (GUI subsystem is the default; `-Dconsole=true` is for debugging only).
