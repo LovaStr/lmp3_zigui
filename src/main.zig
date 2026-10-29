@@ -453,9 +453,24 @@ fn playlist(st: *AppState) zigui.View {
         }).spacing(6).frameMaxWidth().frameMaxHeight();
     }
 
+    // zigui registers a tap region for every row, clipped or not, and the last
+    // region under the pointer wins. Rows scrolled out of view sit on top of the
+    // controls above the list (e.g. the seek slider) and would steal their clicks,
+    // so only rows lying fully inside the viewport are made tappable. Row pitch
+    // comes from the content height measured on the previous frame.
+    const n = st.entries.items.len;
+    const hair = g_theme.metrics.hairline;
+    const content_h = st.list_scroll.content_h;
+    const view_h = st.list_scroll.viewport_h;
+    const measured = content_h > 0 and view_h > 0;
+    const pitch: f32 = if (measured) (content_h + hair) / @as(f32, @floatFromInt(n)) else 0;
+    const row_h = pitch - hair;
+
     const arena = zigui.view.buildAlloc();
     const rows = arena.alloc(zigui.View, st.entries.items.len * 2) catch return outOfMemoryView();
     for (st.entries.items, 0..) |e, i| {
+        const top = @as(f32, @floatFromInt(i)) * pitch - st.list_scroll.offset;
+        const interactive = !measured or (top >= -0.5 and top + row_h <= view_h + 0.5);
         const ctx = arena.create(RowCtx) catch return outOfMemoryView();
         ctx.* = .{ .st = st, .index = i };
         const is_current = st.current != null and st.current.? == i;
@@ -471,9 +486,8 @@ fn playlist(st: *AppState) zigui.View {
             zigui.Spacer(),
         }).spacing(8)
             .paddingInsets(.{ .top = 8, .leading = 16, .bottom = 8, .trailing = 16 })
-            .frameMaxWidth()
-            .hoverFill(c.hover)
-            .onTap(.{ .ctx = ctx, .func = onRowTap });
+            .frameMaxWidth();
+        if (interactive) row = row.hoverFill(c.hover).onTap(.{ .ctx = ctx, .func = onRowTap });
         // Blue: the loaded track, or with nothing loaded the one play will start.
         const is_cued = st.current == null and i == (if (st.cue < st.entries.items.len) st.cue else 0);
         if (is_current or is_cued) row = row.background(c.selection);
