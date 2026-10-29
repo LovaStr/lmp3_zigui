@@ -1,24 +1,10 @@
-//! Play-list navigation and track-end decisions as pure functions (no SDL, zigui
-//! or audio device), so they can be unit-tested (see tests/transport_test.zig).
-//! main.zig gathers the inputs, calls these, and carries out the result.
+//! Track-end decisions as a pure function (no SDL, zigui or audio device), so
+//! it can be unit-tested (see tests/transport_test.zig). main.zig gathers the
+//! inputs, calls `trackEnd`, and carries out the result.
 
 /// After a track stops by itself, wait this long (SDL ticks, ms) before acting
 /// so the audio device can play out its buffer.
 pub const grace_ms: u64 = 400;
-
-/// Index the "next" button goes to: wraps around at the end of the list; with
-/// nothing loaded it starts at the first track. Null for an empty list.
-pub fn nextIndex(current: ?usize, len: usize) ?usize {
-    if (len == 0) return null;
-    return if (current) |c| (c + 1) % len else 0;
-}
-
-/// Index the "previous" button goes to: wraps around at the start of the list;
-/// with nothing loaded it starts at the first track. Null for an empty list.
-pub fn prevIndex(current: ?usize, len: usize) ?usize {
-    if (len == 0) return null;
-    return if (current) |c| (c + len - 1) % len else 0;
-}
 
 pub const Action = union(enum) {
     none,
