@@ -46,6 +46,10 @@ const AppState = struct {
     paused: bool = false,
     /// true: start the next track when one ends; false: stop after the current track.
     auto_advance: bool = true,
+    /// true: a track that has finished playing is removed from the play list.
+    remove_played: bool = false,
+    /// Track that play starts from when nothing is loaded (see `stopAndCueNext`).
+    cue: usize = 0,
     audio: ?Audio = null,
     volume: zigui.State(f32),
     list_scroll: zigui.ScrollState = .{},
@@ -146,6 +150,7 @@ fn freeEntries(st: *AppState) void {
 fn clearPlaylist(st: *AppState) void {
     stopAudio(st);
     freeEntries(st);
+    st.cue = 0;
     st.setStatus("Play list cleared", .{});
 }
 
@@ -176,9 +181,23 @@ fn playIndex(st: *AppState, index: usize) void {
     st.setStatus("Playing", .{});
 }
 
+/// Stop after a track ended on its own. If played tracks are removed, drop the
+/// finished one and cue the track that followed it, so the next press of play
+/// starts that one (wrapping to the first track past the end of the list).
+fn stopAndCueNext(st: *AppState, finished: ?usize) void {
+    stopAudio(st);
+    st.cue = 0;
+    if (!st.remove_played) return;
+    if (finished) |f| {
+        removeEntry(st, f);
+        st.cue = f;
+    }
+}
+
 fn togglePlayPause(st: *AppState) void {
     if (st.current == null) {
-        if (st.entries.items.len > 0) playIndex(st, 0);
+        const len = st.entries.items.len;
+        if (len > 0) playIndex(st, if (st.cue < len) st.cue else 0);
         return;
     }
     const a = if (st.audio) |*au| au else return;
@@ -194,12 +213,14 @@ fn togglePlayPause(st: *AppState) void {
     }
 }
 
-fn nextTrack(st: *AppState) void {
-    if (transport.nextIndex(st.current, st.entries.items.len)) |i| playIndex(st, i);
-}
-
-fn prevTrack(st: *AppState) void {
-    if (transport.prevIndex(st.current, st.entries.items.len)) |i| playIndex(st, i);
+/// Remove one entry from the play list. `index` must not be the loaded track.
+fn removeEntry(st: *AppState, index: usize) void {
+    const e = st.entries.orderedRemove(index);
+    st.gpa.free(e.path);
+    st.gpa.free(e.title);
+    if (st.current) |c| {
+        if (c > index) st.current = c - 1;
+    }
 }
 
 // --- callbacks --------------------------------------------------------------
@@ -207,14 +228,12 @@ fn prevTrack(st: *AppState) void {
 fn onPlayPause(st: *AppState) void {
     togglePlayPause(st);
 }
-fn onNext(st: *AppState) void {
-    nextTrack(st);
-}
-fn onPrev(st: *AppState) void {
-    prevTrack(st);
-}
 fn onClear(st: *AppState) void {
     clearPlaylist(st);
+}
+fn onToggleRemovePlayed(st: *AppState) void {
+    st.remove_played = !st.remove_played;
+    st.setStatus("{s}", .{if (st.remove_played) "Played tracks are removed from the list" else "Played tracks stay in the list"});
 }
 fn onToggleAutoAdvance(st: *AppState) void {
     st.auto_advance = !st.auto_advance;
@@ -274,15 +293,21 @@ fn frameHook() void {
         .auto_advance = st.auto_advance,
     });
     st.ended_at = step.ended_at;
+    const finished = st.current;
     switch (step.action) {
         .none => {},
-        .play => |i| playIndex(st, i),
+        .play => |i| {
+            // Start the next track first (this unloads the finished one), then drop
+            // the finished entry, which sits before it in the list.
+            playIndex(st, i);
+            if (st.remove_played) if (finished) |f| removeEntry(st, f);
+        },
         .stop_after_track => {
-            stopAudio(st);
+            stopAndCueNext(st, finished);
             st.setStatus("Stopped after current track", .{});
         },
         .stop_end_of_list => {
-            stopAudio(st);
+            stopAndCueNext(st, finished);
             st.setStatus("Reached the end of the play list", .{});
         },
     }
@@ -361,31 +386,27 @@ fn nowPlaying(st: *AppState) zigui.View {
 fn controls(st: *AppState) zigui.View {
     const playing = st.isPlaying();
     return zigui.HStack(.{
-        zigui.IconButton(.chevron_left, 24, zigui.actionCtx(AppState, st, onPrev)),
         zigui.IconButton(if (playing) .pause else .play, 30, zigui.actionCtx(AppState, st, onPlayPause)),
-        zigui.IconButton(.chevron_right, 24, zigui.actionCtx(AppState, st, onNext)),
         autoAdvanceToggle(st),
+        removePlayedToggle(st),
         zigui.Spacer(),
         zigui.Icon(.volume, 18, null),
         zigui.Slider(st.volume.binding(), 0, 1).frameWidth(140),
     }).spacing(14).paddingInsets(.{ .top = 10, .leading = 16, .bottom = 10, .trailing = 16 });
 }
 
-/// Toggle between "-> continue to the next track" and ">| stop after this track".
-/// zigui has no skip/stop-bar glyph, so ">|" is a chevron plus a thin bar.
+/// Arrow button: full strength while playback continues with the next track,
+/// dimmed grey (like the trash button) while it stops after the current one.
 fn autoAdvanceToggle(st: *AppState) zigui.View {
-    const c = colors();
-    const glyph: zigui.View = if (st.auto_advance)
-        zigui.Icon(.arrow_right, 20, null)
-    else
-        zigui.HStack(.{
-            zigui.Icon(.chevron_right, 20, null),
-            zigui.Rectangle(c.label).frame(2, 14),
-        }).spacing(0);
-    return zigui.HStack(.{glyph})
-        .frame(30, 28)
-        .hoverFill(c.hover)
-        .onTap(zigui.actionCtx(AppState, st, onToggleAutoAdvance));
+    const btn = zigui.IconButton(.arrow_right, 30, zigui.actionCtx(AppState, st, onToggleAutoAdvance));
+    return if (st.auto_advance) btn else btn.opacity(0.35);
+}
+
+/// Trash button: dimmed grey while played tracks stay in the list, full strength
+/// while they are removed. Same size as the play/pause button.
+fn removePlayedToggle(st: *AppState) zigui.View {
+    const btn = zigui.IconButton(.trash, 30, zigui.actionCtx(AppState, st, onToggleRemovePlayed));
+    return if (st.remove_played) btn else btn.opacity(0.35);
 }
 
 fn playlistHeader(st: *AppState) zigui.View {
@@ -440,7 +461,9 @@ fn playlist(st: *AppState) zigui.View {
             .frameMaxWidth()
             .hoverFill(c.hover)
             .onTap(.{ .ctx = ctx, .func = onRowTap });
-        if (is_current) row = row.background(c.selection);
+        // Blue: the loaded track, or with nothing loaded the one play will start.
+        const is_cued = st.current == null and i == (if (st.cue < st.entries.items.len) st.cue else 0);
+        if (is_current or is_cued) row = row.background(c.selection);
 
         rows[i * 2] = row;
         rows[i * 2 + 1] = zigui.Divider();
