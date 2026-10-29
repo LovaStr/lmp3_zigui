@@ -1,4 +1,4 @@
-//! Decoder tests. WAV fixtures are generated in a temporary directory by the
+﻿//! Decoder tests. WAV fixtures are generated in a temporary directory by the
 //! tests themselves, so no binary files are stored in the repository.
 
 const std = @import("std");
@@ -241,7 +241,7 @@ test "load handles non-ASCII file names" {
     const wav = try pcm16Wav(44100, 100, &.{ 100, 100 });
     defer gpa.free(wav);
 
-    const t = try loadFixture(&tmp, "låt – ö.wav", wav);
+    const t = try loadFixture(&tmp, "lÃ¥t â€“ Ã¶.wav", wav);
     defer t.destroy(gpa);
 
     try expectEqual(@as(usize, 100), t.frameCount());
@@ -371,4 +371,12 @@ test "load fails for an unsupported extension even if the content is a valid WAV
     const path = try writeFixture(&tmp, "audio.ogg", wav);
     defer gpa.free(path);
     try std.testing.expectError(error.OpenFailed, decoder.load(gpa, path));
+}
+
+test "describeError gives a sentence for each decoder error and falls back to the name" {
+    try std.testing.expectEqualStrings("File is incomplete or damaged", decoder.describeError(error.Truncated));
+    try std.testing.expectEqualStrings("Track is longer than 2 hours", decoder.describeError(error.TooLong));
+    try std.testing.expectEqualStrings("More than 8 channels are not supported", decoder.describeError(error.UnsupportedChannelCount));
+    try std.testing.expectEqualStrings("Could not open file (missing, locked or damaged)", decoder.describeError(error.OpenFailed));
+    try std.testing.expectEqualStrings("SomethingElse", decoder.describeError(error.SomethingElse));
 }
