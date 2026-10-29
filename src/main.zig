@@ -29,6 +29,43 @@ inline fn colors() zigui.Palette {
     return g_theme.colors;
 }
 
+// --- layout -----------------------------------------------------------------
+
+/// Sizes and spacing used by the views (points). Untyped so they fit whichever
+/// numeric type a zigui modifier expects.
+const layout = struct {
+    /// Initial and minimum window size.
+    const window_w = 640;
+    const window_h = 720;
+    const window_min_w = 460;
+    const window_min_h = 480;
+
+    /// Left/right margin shared by the control strip, headers, rows and status bar.
+    const margin_h = 16;
+    const controls_v = 10;
+    const header_v = 8;
+    const row_v = 8;
+    const status_v = 6;
+
+    const now_playing_pad = 20;
+    const now_playing_spacing = 8;
+    const controls_spacing = 14;
+    const header_spacing = 8;
+    const row_spacing = 8;
+    const empty_spacing = 6;
+
+    const hero_icon = 44;
+    const button_icon = 30;
+    const volume_icon = 18;
+    const row_icon = 14;
+    /// Width of the row's leading column (track number or play/pause icon).
+    const row_lead_w = 28;
+    const volume_slider_w = 140;
+
+    /// Opacity of a toggle button that is switched off.
+    const dimmed = 0.35;
+};
+
 // --- state ------------------------------------------------------------------
 
 const Entry = struct {
@@ -392,7 +429,7 @@ fn nowPlaying(st: *AppState) zigui.View {
     }
 
     return zigui.VStack(.{
-        zigui.Icon(.audio_lines, 44, c.accent),
+        zigui.Icon(.audio_lines, layout.hero_icon, c.accent),
         zigui.Text(title).font(.title2).truncated(),
         zigui.Text(subtitle).font(.subheadline).foreground(c.secondary_label),
         zigui.Slider(.{ .ctx = st, .getFn = seekGet, .setFn = seekSet }, 0, 1).frameMaxWidth(),
@@ -401,33 +438,33 @@ fn nowPlaying(st: *AppState) zigui.View {
             zigui.Spacer(),
             zigui.Text(fmtTime(dur)).font(.caption).foreground(c.secondary_label),
         }),
-    }).spacing(8).padding(20).frameMaxWidth();
+    }).spacing(layout.now_playing_spacing).padding(layout.now_playing_pad).frameMaxWidth();
 }
 
 fn controls(st: *AppState) zigui.View {
     const playing = st.isPlaying();
     return zigui.HStack(.{
-        zigui.IconButton(if (playing) .pause else .play, 30, zigui.actionCtx(AppState, st, onPlayPause)),
+        zigui.IconButton(if (playing) .pause else .play, layout.button_icon, zigui.actionCtx(AppState, st, onPlayPause)),
         autoAdvanceToggle(st),
         removePlayedToggle(st),
         zigui.Spacer(),
-        zigui.Icon(.volume, 18, null),
-        zigui.Slider(st.volume.binding(), 0, 1).frameWidth(140),
-    }).spacing(14).paddingInsets(.{ .top = 10, .leading = 16, .bottom = 10, .trailing = 16 });
+        zigui.Icon(.volume, layout.volume_icon, null),
+        zigui.Slider(st.volume.binding(), 0, 1).frameWidth(layout.volume_slider_w),
+    }).spacing(layout.controls_spacing).paddingInsets(.{ .top = layout.controls_v, .leading = layout.margin_h, .bottom = layout.controls_v, .trailing = layout.margin_h });
 }
 
 /// Arrow button: full strength while playback continues with the next track,
 /// dimmed grey (like the trash button) while it stops after the current one.
 fn autoAdvanceToggle(st: *AppState) zigui.View {
-    const btn = zigui.IconButton(.arrow_right, 30, zigui.actionCtx(AppState, st, onToggleAutoAdvance));
-    return if (st.auto_advance) btn else btn.opacity(0.35);
+    const btn = zigui.IconButton(.arrow_right, layout.button_icon, zigui.actionCtx(AppState, st, onToggleAutoAdvance));
+    return if (st.auto_advance) btn else btn.opacity(layout.dimmed);
 }
 
 /// Trash button: dimmed grey while played tracks stay in the list, full strength
 /// while they are removed. Same size as the play/pause button.
 fn removePlayedToggle(st: *AppState) zigui.View {
-    const btn = zigui.IconButton(.trash, 30, zigui.actionCtx(AppState, st, onToggleRemovePlayed));
-    return if (st.remove_played) btn else btn.opacity(0.35);
+    const btn = zigui.IconButton(.trash, layout.button_icon, zigui.actionCtx(AppState, st, onToggleRemovePlayed));
+    return if (st.remove_played) btn else btn.opacity(layout.dimmed);
 }
 
 fn playlistHeader(st: *AppState) zigui.View {
@@ -438,7 +475,7 @@ fn playlistHeader(st: *AppState) zigui.View {
         zigui.Button("Add files…",zigui.actionCtx(AppState, st, onAddFile)),
         zigui.Button("Add folder…", zigui.actionCtx(AppState, st, onAddFolder)),
         zigui.Button("Clear", zigui.actionCtx(AppState, st, onClear)),
-    }).spacing(8).paddingInsets(.{ .top = 8, .leading = 16, .bottom = 8, .trailing = 16 });
+    }).spacing(layout.header_spacing).paddingInsets(.{ .top = layout.header_v, .leading = layout.margin_h, .bottom = layout.header_v, .trailing = layout.margin_h });
 }
 
 /// Shown instead of the play list when the per-frame build arena is exhausted.
@@ -459,7 +496,7 @@ fn playlist(st: *AppState) zigui.View {
             zigui.Text("Use “Add files…” or “Add folder…”, or start lmp3 with paths.")
                 .font(.subheadline).foreground(c.tertiary_label),
             zigui.Spacer(),
-        }).spacing(6).frameMaxWidth().frameMaxHeight();
+        }).spacing(layout.empty_spacing).frameMaxWidth().frameMaxHeight();
     }
 
     // zigui registers a tap region for every row, clipped or not, and the last
@@ -485,16 +522,16 @@ fn playlist(st: *AppState) zigui.View {
         const is_current = st.current != null and st.current.? == i;
 
         const lead = if (is_current)
-            zigui.Icon(if (st.paused) .pause else .play, 14, c.accent)
+            zigui.Icon(if (st.paused) .pause else .play, layout.row_icon, c.accent)
         else
             zigui.Text(zigui.components.fmt("{d}", .{i + 1})).font(.caption).foreground(c.tertiary_label);
 
         var row = zigui.HStack(.{
-            lead.frameWidth(28),
+            lead.frameWidth(layout.row_lead_w),
             zigui.Text(e.title).truncated(),
             zigui.Spacer(),
-        }).spacing(8)
-            .paddingInsets(.{ .top = 8, .leading = 16, .bottom = 8, .trailing = 16 })
+        }).spacing(layout.row_spacing)
+            .paddingInsets(.{ .top = layout.row_v, .leading = layout.margin_h, .bottom = layout.row_v, .trailing = layout.margin_h })
             .frameMaxWidth();
         if (interactive) row = row.hoverFill(c.hover).onTap(.{ .ctx = ctx, .func = onRowTap });
         // Blue: the loaded track, or with nothing loaded the one play will start.
@@ -514,7 +551,7 @@ fn statusBar(st: *AppState) zigui.View {
     return zigui.HStack(.{
         zigui.Text(st.status()).font(.caption).foreground(colors().secondary_label).truncated(),
         zigui.Spacer(),
-    }).paddingInsets(.{ .top = 6, .leading = 16, .bottom = 6, .trailing = 16 });
+    }).paddingInsets(.{ .top = layout.status_v, .leading = layout.margin_h, .bottom = layout.status_v, .trailing = layout.margin_h });
 }
 
 fn body(st: *AppState) zigui.View {
@@ -573,9 +610,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     try app.run(gpa, AppState, &st, .{
         .title = "lmp3 — zigui audio player",
-        .width = 640,
-        .height = 720,
-        .min_width = 460,
-        .min_height = 480,
+        .width = layout.window_w,
+        .height = layout.window_h,
+        .min_width = layout.window_min_w,
+        .min_height = layout.window_min_h,
     }, body);
 }
