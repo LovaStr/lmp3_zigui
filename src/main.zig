@@ -45,9 +45,9 @@ const AppState = struct {
     /// The user paused playback (as opposed to the track having ended).
     paused: bool = false,
     /// true: start the next track when one ends; false: stop after the current track.
-    auto_advance: bool = true,
+    auto_advance: bool = false,
     /// true: a track that has finished playing is removed from the play list.
-    remove_played: bool = false,
+    remove_played: bool = true,
     /// Track that play starts from when nothing is loaded (see `stopAndCueNext`).
     cue: usize = 0,
     audio: ?Audio = null,
@@ -503,7 +503,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var st = AppState{
         .gpa = gpa,
-        .volume = zigui.State(f32).init(gpa, 0.8),
+        .volume = zigui.State(f32).init(gpa, 1.0),
     };
     defer {
         freeEntries(&st);
